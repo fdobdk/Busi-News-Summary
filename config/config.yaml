@@ -1,0 +1,84 @@
+# VC/PE Daily Digest — see docs/documentation.md for full details.
+
+scoring:
+  model: "llama-3.3-70b-versatile"   # Groq model for scoring + rewriting
+  min_score: 4                       # only include articles scoring >= this
+
+email:
+  from: "onboarding@resend.dev"      # must be verified in Resend
+  subject: "VC/PE Daily News — {date}"
+  subscribers_file: "config/subscribers.json"
+
+settings:
+  newsapi_language: "en"
+  final_articles_per_category: 5     # articles shown per section
+
+  broad_rss_sources:
+    - { name: "Bloomberg Markets", url: "https://feeds.bloomberg.com/markets/news.rss", paywalled: true }
+    - { name: "WSJ US News", url: "https://feeds.content.dowjones.io/public/rss/WSJcomUSBusiness", paywalled: true}
+
+  newsapi_broad_query: >-
+    ("private equity" OR "PE" OR "VC" OR "PC" OR "buyout" OR "LBO" OR "Leveraged Buyout"
+    OR "venture capital" OR "Series A" OR "Series B" OR "seed round"
+    OR "private credit" OR "direct lending" OR "BDC"
+    OR "Hong Kong IPO" OR "HKEX"
+    OR "Japan IPO" OR "SGX" OR "Singapore IPO"
+    OR "Shanghai IPO" OR "Shenzhen IPO"
+    OR "IPO" OR "S-1 filing")
+
+categories:
+  private_equity:
+    google_news_queries:
+      - '"private equity" buyout OR acquisition OR deal'
+      - '"private equity" fund close OR fundraising OR raised'
+      - 'LBO OR "leveraged buyout" OR "take private" OR "going private"'
+      - '"PE-backed" OR "sponsor-backed" OR "portfolio company" deal'
+      - 'site:wsj.com "private equity" OR "buyout" OR "LBO"'
+    rss_sources:
+      - { name: "FT PE",               url: "https://www.ft.com/private-equity?format=rss",          paywalled: true  }
+
+  venture_capital:
+    google_news_queries:
+      - '"Series A" OR "Series B" OR "Series C" startup funding'
+      - '"seed round" OR "pre-seed" startup raised million'
+      - '"venture capital" investment round raised'
+      - '"funding round" startup raised OR "VC-backed" OR unicorn'
+      - 'site:wsj.com "venture capital" OR "Series A" OR "Series B" OR "startup funding"'
+    rss_sources:
+      - { name: "TechCrunch Venture",  url: "https://techcrunch.com/category/venture/feed/",         paywalled: false }
+      - { name: "AlleyWatch",          url: "https://www.alleywatch.com/feed/",                      paywalled: false }
+
+  private_credit:
+    google_news_queries:
+      - '"private credit" fund close OR deal OR raised'
+      - '"direct lending" OR "BDC" deal OR fund raised'
+      - '"private debt" OR "credit fund" close OR deal'
+      - '"leveraged loan" OR "mezzanine" OR "unitranche" deal'
+      - 'site:wsj.com "private credit" OR "direct lending" OR "BDC" OR "leveraged loan"'
+    rss_sources:
+
+  asia_ipo:
+    display_name: "ASIA IPO & STARTUPS"
+    google_news_queries:
+      - '"Hong Kong" IPO OR listing OR debut'
+      - 'Japan IPO OR listing "Tokyo Stock Exchange"'
+      - 'Singapore IPO OR listing SGX'
+      - 'China IPO OR listing "Shanghai" OR "Shenzhen" OR "HKEX"'
+      - 'Asia startup funding raised Singapore OR Japan OR China OR "Hong Kong"'
+      - 'site:asia.nikkei.com IPO OR listing OR startup funding'
+      - 'site:dealstreetasia.com IPO OR listing OR startup'
+      - 'site:kr-asia.com IPO OR listing OR startup funding'
+    rss_sources:
+      - { name: "FinanceAsia",    url: "https://financeasia.com/rss/latest",     paywalled: false }
+      - { name: "SCMP Business",  url: "https://www.scmp.com/rss/5/feed",        paywalled: true  }
+      - { name: "Asia Financial", url: "https://www.asiafinancial.com/feed",     paywalled: false }
+
+  us_ipo:
+    google_news_queries:
+      - 'IPO pricing OR debut NYSE OR Nasdaq'
+      - '"S-1 filing" OR "S-1" SEC IPO'
+      - '"initial public offering" priced OR filed'
+      - '"going public" OR "public debut" NYSE OR Nasdaq'
+      - 'site:wsj.com IPO OR "S-1" OR "goes public" NYSE OR Nasdaq'
+    rss_sources:
+      - { name: "Dealroom", url: "https://dealroom.net/blog/rss.xml",  paywalled: false }

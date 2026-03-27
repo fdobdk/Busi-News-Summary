@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ subject }}</title>
+  <style>
+    body, table, td, a {
+      -webkit-text-size-adjust: 100%;
+      -ms-text-size-adjust: 100%;
+    }
+    table, td { mso-table-lspace: 0; mso-table-rspace: 0; }
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #eeedf2;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    }
+
+    /* ── Wrapper ── */
+    .wrapper {
+      width: 100%;
+      background-color: #eeedf2;
+      padding: 32px 0 48px;
+    }
+    .inner {
+      max-width: 620px;
+      margin: 0 auto;
+      padding: 0 16px;
+    }
+
+    /* ── Header card ── */
+    .header {
+      background-color: #dcd9eb;
+      border: 1px solid #c9c5de;
+      border-radius: 12px;
+      padding: 32px 36px 28px;
+      text-align: center;
+      margin-bottom: 16px;
+    }
+    .header-title {
+      font-size: 26px;
+      font-weight: 700;
+      color: #2e2b4a;
+      margin: 0 0 8px;
+      letter-spacing: -0.3px;
+    }
+    .header-date {
+      font-size: 16px;
+      color: #6b6891;
+      margin: 0;
+      font-weight: 400;
+    }
+
+    /* ── Section card ── */
+    .section-card {
+      background: #ffffff;
+      border: 1px solid #e4e4e7;
+      border-radius: 12px;
+      padding: 28px 32px 20px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 6px rgba(0,0,0,0.05);
+    }
+    .section-title {
+      font-size: 32px;
+      font-weight: 700;
+      color: #18181b;
+      text-align: center;
+      margin: 0 0 24px;
+      letter-spacing: -0.5px;
+    }
+    .section-divider {
+      border: none;
+      border-top: 1px solid #e4e4e7;
+      margin: 0 0 22px;
+    }
+
+    /* ── Article link block ── */
+    .article-link {
+      display: block;
+      text-decoration: none;
+      color: inherit;
+      border-radius: 8px;
+      padding: 12px;
+      margin: 0 -12px;
+      transition: background-color 0.12s;
+    }
+    .article-link:hover {
+      background-color: #f9f9fb;
+    }
+    .article-link:hover .article-headline {
+      color: #5b4fcf;
+    }
+
+    /* ── Article content ── */
+    .article {
+      margin-bottom: 4px;
+    }
+    .article-headline {
+      font-size: 15.5px;
+      font-weight: 600;
+      color: #18181b;
+      line-height: 1.45;
+      margin: 0 0 8px;
+    }
+    .article-summary {
+      font-size: 13.5px;
+      color: #52525b;
+      line-height: 1.65;
+      margin: 0 0 10px;
+    }
+    .article-meta {
+      font-size: 11.5px;
+      color: #a1a1aa;
+      margin: 0 0 8px;
+    }
+    .article-source-link {
+      display: inline-block;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: #5b4fcf;
+      letter-spacing: 0.2px;
+    }
+    .article-divider {
+      border: none;
+      border-top: 1px solid #f0f0ef;
+      margin: 16px 0;
+    }
+
+    /* ── Empty ── */
+    .no-articles {
+      font-size: 13px;
+      color: #a1a1aa;
+      font-style: italic;
+      margin: 0 0 8px;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      text-align: center;
+      padding: 8px 0 4px;
+    }
+    .footer p {
+      font-size: 11.5px;
+      color: #9896a8;
+      margin: 3px 0;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="inner">
+
+      <!-- Header -->
+      <div class="header">
+        <p class="header-title">Daily VC / PE News</p>
+        <p class="header-date">{{ date }}</p>
+      </div>
+
+      <!-- Section cards -->
+      {% for section_key, section in sections.items() %}
+      <div class="section-card">
+
+        <p class="section-title">{{ section.name }}</p>
+        <hr class="section-divider">
+
+        {% if section.articles %}
+          {% for article in section.articles %}
+          <div class="article">
+            {% if article.url %}
+            <a class="article-link" href="{{ article.url }}" target="_blank" rel="noopener">
+            {% endif %}
+
+              <p class="article-headline">
+                {{ article.rewritten_headline or article.title }}
+              </p>
+              <p class="article-summary">
+                {{ article.rewritten_summary or article.description }}
+              </p>
+              <p class="article-meta">
+                {{ article.source }}
+                {% set pub = article.published_at | fmt_pub_date %}
+                {% if pub %}&nbsp;&middot;&nbsp;{{ pub }}{% endif %}
+              </p>
+              {% if article.url %}
+              <span class="article-source-link">Read source &rarr;</span>
+              {% endif %}
+
+            {% if article.url %}
+            </a>
+            {% endif %}
+          </div>
+          {% if not loop.last %}<hr class="article-divider">{% endif %}
+          {% endfor %}
+
+        {% else %}
+          <p class="no-articles">No qualifying articles today.</p>
+        {% endif %}
+
+      </div>
+      {% endfor %}
+
+      <!-- Footer -->
+      <div class="footer">
+        <p>VC / PE Daily Digest &middot; {{ date }}</p>
+        <p>Articles are selected and summarised automatically.</p>
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>

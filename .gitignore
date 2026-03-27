@@ -1,0 +1,15 @@
+# Environment & secrets
+config/.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Generated output
+preview/email_preview.html
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
