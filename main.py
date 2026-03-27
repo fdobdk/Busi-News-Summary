@@ -334,9 +334,9 @@ def main() -> None:
         sys.exit(1)
 
     html = render_html(digest_sections, config, date_str)
-    Path(args.preview_file).write_text(html, encoding="utf-8")
 
     if args.dry_run:
+        Path(args.preview_file).write_text(html, encoding="utf-8")
         print_terminal_digest(digest_sections, date_str, args.preview_file)
         logger.info("Dry run complete — no emails sent.")
     else:
