@@ -5,26 +5,17 @@ scoring:
   min_score: 4                       # only include articles scoring >= this
 
 email:
-  from: "onboarding@resend.dev"      # must be verified in Resend
   subject: "VC/PE Daily News — {date}"
   subscribers_file: "config/subscribers.json"
 
 settings:
-  newsapi_language: "en"
   final_articles_per_category: 5     # articles shown per section
 
   broad_rss_sources:
     - { name: "Bloomberg Markets", url: "https://feeds.bloomberg.com/markets/news.rss", paywalled: true }
     - { name: "WSJ US News", url: "https://feeds.content.dowjones.io/public/rss/WSJcomUSBusiness", paywalled: true}
-
-  newsapi_broad_query: >-
-    ("private equity" OR "PE" OR "VC" OR "PC" OR "buyout" OR "LBO" OR "Leveraged Buyout"
-    OR "venture capital" OR "Series A" OR "Series B" OR "seed round"
-    OR "private credit" OR "direct lending" OR "BDC"
-    OR "Hong Kong IPO" OR "HKEX"
-    OR "Japan IPO" OR "SGX" OR "Singapore IPO"
-    OR "Shanghai IPO" OR "Shenzhen IPO"
-    OR "IPO" OR "S-1 filing")
+    - { name: "The Economist Business", url: "https://rss.app/feeds/lQIBJcYNLaAGDtub.xml", paywalled: true}
+    - { name: "Reuters Deals", url: "https://rss.app/feeds/baxmyvPt86qReFkK.xml", paywalled: false}
 
 categories:
   private_equity:
@@ -55,6 +46,10 @@ categories:
       - '"private debt" OR "credit fund" close OR deal'
       - '"leveraged loan" OR "mezzanine" OR "unitranche" deal'
       - 'site:wsj.com "private credit" OR "direct lending" OR "BDC" OR "leveraged loan"'
+      - '"private credit" redemption OR default OR fund'
+      - '"private credit" CLO OR BDC OR lending'
+      - '"direct lending" fund OR deal OR billion'
+      - 'BCRED OR HLEND OR "Owl Rock" OR "Ares Capital" OR "Apollo Debt"'
     rss_sources:
 
   asia_ipo:

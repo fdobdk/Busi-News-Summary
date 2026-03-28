@@ -1,15 +1,13 @@
 """
 sources.py — Fetch articles from ALL configured sources into a single flat pool.
 
-Every RSS feed, Google News query, broad RSS source, and NewsAPI call dumps
-into one list.  No category assignment happens here — that's the AI's job.
+Every RSS feed, Google News query, and broad RSS source dumps into one list.
+No category assignment happens here — that's the AI's job.
 URL-level dedup removes exact duplicates across sources.
 """
 
 import logging
-import os
 import re
-import time
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import List, Tuple
@@ -18,13 +16,6 @@ import feedparser
 import requests
 
 logger = logging.getLogger(__name__)
-
-_NEWSAPI_POST_CALL_DELAY = 1.0
-
-
-class NewsAPIQuotaError(Exception):
-    """Raised when NewsAPI returns 429 — signals daily quota exhausted."""
-
 
 USER_AGENT = (
     "VCPEDigest/1.0 (automated financial news aggregator; "
@@ -168,79 +159,18 @@ def _fetch_rss(
         return [], f"error:{exc}"
 
 
-def _fetch_newsapi_broad(
-    query: str, api_key: str, cutoff: datetime, language: str = "en",
-) -> Tuple[List[dict], str]:
-    """Single NewsAPI /v2/everything call for the broad query."""
-    try:
-        response = requests.get(
-            "https://newsapi.org/v2/everything",
-            params={
-                "qintitle": query,
-                "from": cutoff.strftime("%Y-%m-%dT%H:%M:%S"),
-                "sortBy": "publishedAt",
-                "language": language,
-                "pageSize": 20,
-                "apiKey": api_key,
-            },
-            timeout=15,
-        )
-        response.raise_for_status()
-        data = response.json()
-
-        articles = []
-        for item in data.get("articles", []):
-            if item.get("title") in (None, "[Removed]"):
-                continue
-            pub_date = None
-            raw_date = item.get("publishedAt")
-            if raw_date:
-                try:
-                    pub_date = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
-                except ValueError:
-                    pass
-            articles.append({
-                "title": _strip_html(item.get("title") or ""),
-                "url": (item.get("url") or "").strip(),
-                "description": _strip_html(item.get("description") or ""),
-                "source": item.get("source", {}).get("name", "NewsAPI"),
-                "published_at": pub_date.isoformat() if pub_date else None,
-                "content": (item.get("content") or "").strip(),
-                "_source_type": "newsapi",
-            })
-
-        status = "ok" if articles else "empty"
-        return articles, status
-
-    except requests.HTTPError as exc:
-        if exc.response is not None and exc.response.status_code == 429:
-            raise NewsAPIQuotaError("Daily quota exhausted (HTTP 429)") from exc
-        logger.warning("NewsAPI fetch failed [%s...]: %s", query[:50], exc)
-        return [], f"error:{exc}"
-    except Exception as exc:
-        logger.warning("NewsAPI fetch failed [%s...]: %s", query[:50], exc)
-        return [], f"error:{exc}"
-
-
 def fetch_all_articles(config: dict) -> Tuple[List[dict], List[dict]]:
     """
     Fetch from ALL sources into a single flat pool.  Returns (articles, source_log).
 
     Sources fetched:
       - Broad RSS feeds (e.g. Bloomberg Markets)
-      - NewsAPI broad query
       - Per-category: Google News queries + dedicated RSS feeds
 
     URL-level dedup ensures each article appears exactly once.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
-    newsapi_key = os.getenv("NEWSAPI_API_KEY", "")
     settings = config.get("settings", {})
-    language = settings.get("newsapi_language", "en")
-
-    if newsapi_key and newsapi_key.startswith("your_"):
-        logger.warning("NEWSAPI_API_KEY looks like a placeholder — ignoring.")
-        newsapi_key = ""
 
     source_log: List[dict] = []
     all_articles: List[dict] = []
@@ -266,29 +196,6 @@ def fetch_all_articles(config: dict) -> Tuple[List[dict], List[dict]]:
             "paywalled": bsource.get("paywalled", False),
         })
         logger.info("Broad RSS [%s] → %d articles", bsource["name"], added)
-
-    # ── NewsAPI broad query ──
-    broad_query = settings.get("newsapi_broad_query", "")
-    if newsapi_key and broad_query:
-        try:
-            fetched, status = _fetch_newsapi_broad(
-                broad_query, newsapi_key, cutoff, language,
-            )
-            added = _add(fetched)
-            time.sleep(_NEWSAPI_POST_CALL_DELAY)
-            source_log.append({
-                "source": "NewsAPI (broad)", "section": "Broad",
-                "count": added, "status": status, "paywalled": False,
-            })
-            logger.info("NewsAPI broad → %d articles", added)
-        except NewsAPIQuotaError:
-            logger.warning("NewsAPI daily quota exhausted — skipping.")
-            source_log.append({
-                "source": "NewsAPI (broad)", "section": "Broad",
-                "count": 0, "status": "quota_exhausted", "paywalled": False,
-            })
-    elif not newsapi_key:
-        logger.debug("NEWSAPI_API_KEY not set — skipping NewsAPI.")
 
     # ── Per-category: Google News queries + dedicated RSS feeds ──
     for category_key, category_cfg in config["categories"].items():

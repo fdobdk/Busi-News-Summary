@@ -99,12 +99,15 @@ For each article, provide:
    2 — Vague or speculative, no specific firm or deal
    1 — Generic outlook, trend piece, or commentary
 
+SOURCE PREFERENCES:
+Prefer sources from the following list: Bloomberg, Wallstreet Journal (WSJ), The Economist, Finantial Times, Reuters, The New York Times
+
 CATEGORY DEFINITIONS:
-PE: buyouts, acquisitions by PE firms, fund closings, PE exits, take-privates, portfolio company deals
-VC: startup funding rounds (US/Europe focus), venture investments, accelerator news
-PC: private lending, BDC news, credit fund launches, loan defaults, CLOs, leveraged loans
-ASIA_IPO: companies listing on HKEX, Tokyo Stock Exchange, SGX, Shanghai/Shenzhen; Asian startup funding
-US_IPO: companies listing on NYSE/Nasdaq, S-1 filings, SPAC mergers
+PE (private equity): buyouts, acquisitions by PE firms, fund closings, PE exits, take-privates, portfolio company deals
+VC (venture capital): startup funding rounds (US/Europe/Asia focus), venture investments, accelerator news, y-combinator, accelerator, founder
+PC (private credit): private lending, BDC news, credit fund launches, loan defaults, CLOs, leveraged loans, direct lending, private debt, mezzanine, unitranche
+ASIA_IPO (Initial Public Offering): companies listing on HKEX, Tokyo Stock Exchange, SGX, Shanghai/Shenzhen; Asian startup funding, startup
+US_IPO (Initial Public Offering): companies listing on NYSE/Nasdaq, S-1 filings, SPAC mergers, Startup, Series A, Series B, Series C, Series D, Seed
 DISCARD: doesn't fit any category, or not relevant to a VC/PE audience
 
 DEDUPLICATION:
@@ -207,6 +210,127 @@ def batch_categorize_and_score(articles: List[dict], config: dict) -> List[dict]
     categorised = sum(1 for a in articles if a.get("score", 0) > 0)
     logger.info("Categorise+score done: %d/%d articles kept", categorised, len(articles))
     return articles
+
+
+# ── Step 1b: Final cross-batch deduplication ─────────────────────────────
+
+_FINAL_DEDUP_PROMPT = """\
+You are checking a curated news digest for duplicate stories. \
+Two articles are duplicates if they cover the SAME event/deal/announcement, \
+even if the wording or source differs.
+
+For each duplicate pair, keep the article from the MORE reputable source. \
+Source priority (highest first): Bloomberg, Wall Street Journal (WSJ), \
+The Economist, Financial Times (FT), Reuters, The New York Times. \
+If sources are equally reputable, keep the non-paywalled version.
+
+If a duplicate appears across different categories, re-evaluate which \
+category is the BEST fit and keep it there.
+
+ARTICLES (grouped by category):
+{articles_block}
+
+If there are NO duplicates, return exactly: {{"duplicates": []}}
+
+If there ARE duplicates, return:
+{{"duplicates": [{{"remove_index": 3, "reason": "duplicate of index 1, same Apollo deal, keeping Bloomberg version"}}]}}
+
+Return ONLY JSON, no extra text.
+"""
+
+
+def final_dedup_check(
+    top_by_cat: dict,
+    by_category: dict,
+    category_keys: list,
+    final_cap: int,
+    config: dict,
+) -> int:
+    """
+    AI-powered final dedup across all winner articles. Runs up to 3 iterations.
+    Mutates top_by_cat in place. Returns number of iterations run.
+    """
+    model = config["scoring"]["model"]
+    max_iterations = 3
+
+    for iteration in range(1, max_iterations + 1):
+        # Build a flat indexed list of all winners with their category
+        flat = []
+        index_map = {}  # global_index → (cat_key, local_index)
+        gi = 0
+        lines = []
+        for cat_key in category_keys:
+            articles = top_by_cat.get(cat_key, [])
+            if not articles:
+                continue
+            cat_label = cat_key.replace("_", " ").upper()
+            lines.append(f"── {cat_label} ──")
+            for li, a in enumerate(articles):
+                lines.append(f"[{gi}] {a.get('title', '').strip()[:200]}")
+                lines.append(f"    Source: {a.get('source', '')}")
+                desc = (a.get("description") or "").strip()[:300]
+                if desc:
+                    lines.append(f"    {desc}")
+                lines.append("")
+                index_map[gi] = (cat_key, li)
+                flat.append(a)
+                gi += 1
+
+        if gi == 0:
+            break
+
+        prompt = _FINAL_DEDUP_PROMPT.format(articles_block="\n".join(lines))
+        try:
+            client = _get_client(model)
+            raw = _call(client, model, prompt, max_tokens=500)
+            result = _extract_json(raw)
+
+            if isinstance(result, list):
+                duplicates = result
+            else:
+                duplicates = result.get("duplicates", [])
+
+            if not duplicates:
+                logger.info("  Final dedup pass %d: no duplicates found ✓", iteration)
+                return iteration
+
+            logger.info("  Final dedup pass %d: removing %d duplicate(s)", iteration, len(duplicates))
+
+            # Collect indices to remove (process highest first so local indices stay valid)
+            removals = []
+            for dup in duplicates:
+                ri = dup.get("remove_index")
+                if ri is not None and ri in index_map:
+                    removals.append(index_map[ri])
+
+            # Remove duplicates from top_by_cat
+            removed_cats = set()
+            for cat_key, local_idx in sorted(removals, key=lambda x: -x[1]):
+                articles = top_by_cat.get(cat_key, [])
+                if local_idx < len(articles):
+                    articles.pop(local_idx)
+                    removed_cats.add(cat_key)
+
+            # Backfill from by_category pool
+            for cat_key in removed_cats:
+                current = top_by_cat.get(cat_key, [])
+                current_urls = {a.get("url") for a in current}
+                pool = by_category.get(cat_key, [])
+                for candidate in pool:
+                    if len(current) >= final_cap:
+                        break
+                    if candidate.get("url") not in current_urls:
+                        current.append(candidate)
+                        current_urls.add(candidate.get("url"))
+                top_by_cat[cat_key] = current
+
+            time.sleep(2)  # rate-limit courtesy
+
+        except Exception as exc:
+            logger.warning("  Final dedup pass %d failed: %s — skipping", iteration, exc)
+            return iteration
+
+    return max_iterations
 
 
 # ── Step 2: Rewrite ──────────────────────────────────────────────────────

@@ -2,15 +2,29 @@ name: Daily News Digest
 
 on:
   schedule:
-    - cron: '0 0 * * 1-5' # 8 AM HKT (UTC+8), weekdays only
+    - cron: '59 23 * * 0-4' # 7:59 AM HKT (UTC+8), Mon-Fri
+    - cron: '59 12 * * *'   # 7:59 AM EST (UTC-5), every day
   workflow_dispatch:
+    inputs:
+      audience:
+        description: 'Which subscriber list to send to'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - hk
+          - est
+          - both
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  run-digest:
+  digest-hk:
     runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' && (github.event.inputs.audience == 'hk' || github.event.inputs.audience == 'both')
+      || github.event_name == 'schedule' && github.event.schedule == '59 23 * * 0-4'
 
     steps:
       - uses: actions/checkout@v4
@@ -23,10 +37,35 @@ jobs:
       - name: Install dependencies
         run: pip install -r config/requirements.txt
 
-      - name: Run daily digest
+      - name: Run daily digest (HK)
         env:
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
-          NEWSAPI_API_KEY: ${{ secrets.NEWSAPI_API_KEY }}
-        run: python main.py
+        run: python main.py --subscribers config/subscribers_hk.json
+
+  digest-est:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' && (github.event.inputs.audience == 'est' || github.event.inputs.audience == 'both')
+      || github.event_name == 'schedule' && github.event.schedule == '59 12 * * *'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r config/requirements.txt
+
+      - name: Run daily digest (EST)
+        env:
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+        run: python main.py --subscribers config/subscribers_est.json

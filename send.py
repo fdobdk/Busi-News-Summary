@@ -1,9 +1,12 @@
-"""send.py — Send the rendered HTML digest via Resend."""
+"""send.py — Send the rendered HTML digest via Gmail SMTP."""
 
 import csv
 import json
 import logging
 import os
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from pathlib import Path
 from typing import List
 
@@ -33,7 +36,7 @@ def load_subscribers(path: str) -> List[dict]:
 
 def send_digest(html: str, subject: str, config: dict, dry_run: bool = False) -> None:
     """
-    Send *html* to every subscriber.
+    Send *html* to every subscriber via Gmail SMTP.
 
     In dry-run mode this is a no-op (the caller has already saved the preview).
     """
@@ -48,35 +51,36 @@ def send_digest(html: str, subject: str, config: dict, dry_run: bool = False) ->
         logger.info("[DRY RUN] Email send skipped (%d subscriber(s)).", len(subscribers))
         return
 
-    api_key = os.getenv("RESEND_API_KEY", "")
-    if not api_key:
-        raise EnvironmentError("RESEND_API_KEY is not set. Add it to config/.env.")
+    gmail_address = os.getenv("GMAIL_ADDRESS", "")
+    gmail_password = os.getenv("GMAIL_APP_PASSWORD", "")
+    if not gmail_address or not gmail_password:
+        raise EnvironmentError(
+            "GMAIL_ADDRESS and GMAIL_APP_PASSWORD must be set. Add them to config/.env."
+        )
 
-    try:
-        import resend as resend_sdk
-    except ImportError:
-        raise ImportError("Install the 'resend' package: pip install resend")
-
-    resend_sdk.api_key = api_key
-    from_email = config["email"]["from"]
     sent = 0
     failed = 0
 
-    for subscriber in subscribers:
-        email = (subscriber.get("email") or "").strip()
-        if not email:
-            continue
-        try:
-            resend_sdk.Emails.send({
-                "from": from_email,
-                "to": email,
-                "subject": subject,
-                "html": html,
-            })
-            logger.info("Sent → %s", email)
-            sent += 1
-        except Exception as exc:
-            logger.error("Failed → %s: %s", email, exc)
-            failed += 1
+    with smtplib.SMTP("smtp.gmail.com", 587) as server:
+        server.starttls()
+        server.login(gmail_address, gmail_password)
+
+        for subscriber in subscribers:
+            email = (subscriber.get("email") or "").strip()
+            if not email:
+                continue
+            try:
+                msg = MIMEMultipart("alternative")
+                msg["From"] = gmail_address
+                msg["To"] = email
+                msg["Subject"] = subject
+                msg.attach(MIMEText(html, "html"))
+
+                server.sendmail(gmail_address, email, msg.as_string())
+                logger.info("Sent → %s", email)
+                sent += 1
+            except Exception as exc:
+                logger.error("Failed → %s: %s", email, exc)
+                failed += 1
 
     logger.info("Send complete: %d sent, %d failed.", sent, failed)

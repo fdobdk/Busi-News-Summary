@@ -11,7 +11,9 @@ New architecture (flat pool):
 """
 
 import argparse
+import json
 import logging
+import re
 import sys
 import time
 from collections import defaultdict
@@ -23,7 +25,7 @@ from dotenv import load_dotenv
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from dedup import deduplicate
-from scoring import batch_categorize_and_score, batch_rewrite
+from scoring import batch_categorize_and_score, batch_rewrite, final_dedup_check
 from send import send_digest
 from sources import fetch_all_articles
 
@@ -185,7 +187,55 @@ def print_source_summary(source_log: list) -> None:
     print()
 
 
-def build_digest(config: dict, no_score: bool = False, verbose: bool = False) -> dict:
+_PC_DEBUG_KEYWORDS = re.compile(
+    r"private credit|direct lend|BDC|CLO|credit fund|private debt|leveraged loan|"
+    r"mezzanine|unitranche|loan default|credit spread|redemption|BCRED|HLEND|"
+    r"Owl Rock|Ares Capital|Apollo Debt|Blue Owl|debt fund",
+    re.IGNORECASE,
+)
+
+
+def _save_debug_log(articles: list, scored: list) -> str:
+    """Save a JSON debug file showing PC keyword matches vs AI assignments."""
+    # Find articles that matched PC keywords BEFORE scoring
+    pc_keyword_matches = []
+    for a in articles:
+        text = (a.get("title") or "") + " " + (a.get("description") or "")
+        matches = _PC_DEBUG_KEYWORDS.findall(text)
+        if matches:
+            pc_keyword_matches.append({
+                "title": a.get("title", ""),
+                "source": a.get("source", ""),
+                "url": a.get("url", ""),
+                "pc_keywords_found": list(set(matches)),
+            })
+
+    # After scoring, find what happened to those articles
+    scored_by_url = {a.get("url"): a for a in scored}
+    debug_entries = []
+    for match in pc_keyword_matches:
+        scored_article = scored_by_url.get(match["url"], {})
+        debug_entries.append({
+            "title": match["title"],
+            "source": match["source"],
+            "pc_keywords_found": match["pc_keywords_found"],
+            "ai_category": scored_article.get("section", "NOT_SCORED"),
+            "ai_score": scored_article.get("score", 0),
+            "url": match["url"],
+        })
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = f"debug/pc_debug_{timestamp}.json"
+    Path("debug").mkdir(exist_ok=True)
+    Path(path).write_text(json.dumps({
+        "total_articles_in_pool": len(articles),
+        "articles_with_pc_keywords": len(pc_keyword_matches),
+        "debug_entries": debug_entries,
+    }, indent=2), encoding="utf-8")
+    return path
+
+
+def build_digest(config: dict, no_score: bool = False, verbose: bool = False, debug: bool = False) -> dict:
     """
     Full pipeline:
       1. Fetch all sources → flat pool
@@ -234,8 +284,13 @@ def build_digest(config: dict, no_score: bool = False, verbose: bool = False) ->
 
     # ── Step 4: AI categorise + score ──
     logger.info("━━ Step 4 — AI categorise + score (%d articles) ━━", len(deduped))
+    pre_score_pool = list(deduped) if debug else []
     scored = batch_categorize_and_score(deduped, config)
     time.sleep(2)  # rate-limit courtesy before rewrite call
+
+    if debug:
+        debug_path = _save_debug_log(pre_score_pool, scored)
+        logger.info("Debug log saved → %s", debug_path)
 
     # ── Step 5: Group by category, take top N per category ──
     by_category = defaultdict(list)
@@ -254,13 +309,19 @@ def build_digest(config: dict, no_score: bool = False, verbose: bool = False) ->
             ),
         )
 
-    # Take top N per category and collect all winners for rewriting
-    winners = []
+    # Take top N per category
     top_by_cat = {}
     for cat_key in category_keys:
-        top = by_category.get(cat_key, [])[:final_cap]
-        top_by_cat[cat_key] = top
-        winners.extend(top)
+        top_by_cat[cat_key] = by_category.get(cat_key, [])[:final_cap]
+
+    # ── Step 5b: Final AI dedup across categories ──
+    logger.info("━━ Step 5b — Final cross-batch dedup ━━")
+    iterations = final_dedup_check(top_by_cat, by_category, category_keys, final_cap, config)
+    print(f"\n  Final dedup: {iterations} pass(es) run (max 3)\n")
+
+    winners = []
+    for cat_key in category_keys:
+        winners.extend(top_by_cat.get(cat_key, []))
 
     # ── Step 6: Rewrite winners ──
     logger.info("━━ Step 5 — Rewriting %d winner articles ━━", len(winners))
@@ -310,6 +371,17 @@ def main() -> None:
         help="Print a per-source fetch summary showing which sources succeeded, "
              "returned 0 articles, or errored (401/403/etc.).",
     )
+    parser.add_argument(
+        "--subscribers",
+        metavar="FILE",
+        help="Override the subscribers file from config (e.g. config/subscribers_hk.json).",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Save a debug JSON file showing all articles that matched Private Credit "
+             "keywords before AI scoring, what category the AI assigned, and what score.",
+    )
     args = parser.parse_args()
 
     load_dotenv(Path(__file__).parent / "config" / ".env")
@@ -322,10 +394,12 @@ def main() -> None:
         sys.exit(1)
 
     config = load_config(args.config)
+    if args.subscribers:
+        config["email"]["subscribers_file"] = args.subscribers
     date_str = datetime.now().strftime("%B %d, %Y")
 
     try:
-        digest_sections = build_digest(config, no_score=args.no_score, verbose=args.verbose)
+        digest_sections = build_digest(config, no_score=args.no_score, verbose=args.verbose, debug=args.debug)
     except EnvironmentError as exc:
         logger.error("Configuration error: %s", exc)
         sys.exit(1)

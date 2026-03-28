@@ -8,6 +8,7 @@ __pycache__/
 
 # Generated output
 preview/email_preview.html
+debug/
 *.log
 
 # OS
