@@ -52,9 +52,16 @@ def _extract_json(raw: str):
                 break
     for open_ch, close_ch in [("[", "]"), ("{", "}")]:
         start = raw.find(open_ch)
-        end   = raw.rfind(close_ch) + 1
-        if start != -1 and end > start:
-            return json.loads(raw[start:end])
+        if start == -1:
+            continue
+        # Try from the last closing bracket inward until parse succeeds
+        end = raw.rfind(close_ch) + 1
+        while end > start:
+            try:
+                return json.loads(raw[start:end])
+            except json.JSONDecodeError:
+                # Shrink: find the previous closing bracket
+                end = raw.rfind(close_ch, start, end - 1) + 1
     raise ValueError(f"No JSON found in response: {raw[:200]}")
 
 
