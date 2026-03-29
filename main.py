@@ -58,11 +58,14 @@ def _fmt_pub_date(iso_str: str) -> str:
             hour = d.hour % 12 or 12
             return f"{hour}:{d.strftime('%M')} {'AM' if d.hour < 12 else 'PM'}"
 
+        def _24h(d: datetime) -> str:
+            return f"{d.hour}:{d.strftime('%M')}"
+
         est_label = est.strftime("%Z")   # "EST" or "EDT"
         return (
             f"{est.strftime('%b %d')} · "
-            f"{_12h(est)} {est_label} / "
-            f"{_12h(hkt)} HKT"
+            f"{est.month:02d}-{est.day} {_12h(est)} {est_label} / "
+            f"{hkt.month:02d}-{hkt.day} {_24h(hkt)} HKT"
         )
     except Exception:
         return ""
@@ -309,19 +312,19 @@ def build_digest(config: dict, no_score: bool = False, verbose: bool = False, de
             ),
         )
 
-    # Take top N per category
-    top_by_cat = {}
-    for cat_key in category_keys:
-        top_by_cat[cat_key] = by_category.get(cat_key, [])[:final_cap]
-
-    # ── Step 5b: Final AI dedup across categories ──
-    logger.info("━━ Step 5b — Final cross-batch dedup ━━")
-    iterations = final_dedup_check(top_by_cat, by_category, category_keys, final_cap, config)
+    # ── Step 5b: Final AI dedup across all scored articles ──
+    total_scored = sum(len(v) for v in by_category.values())
+    logger.info("━━ Step 5b — Final cross-batch dedup (%d scored articles) ━━", total_scored)
+    iterations = final_dedup_check(by_category, category_keys, config)
     print(f"\n  Final dedup: {iterations} pass(es) run (max 3)\n")
 
+    # Take top N per category after dedup
     winners = []
+    top_by_cat = {}
     for cat_key in category_keys:
-        winners.extend(top_by_cat.get(cat_key, []))
+        top = by_category.get(cat_key, [])[:final_cap]
+        top_by_cat[cat_key] = top
+        winners.extend(top)
 
     # ── Step 6: Rewrite winners ──
     logger.info("━━ Step 5 — Rewriting %d winner articles ━━", len(winners))

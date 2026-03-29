@@ -240,27 +240,25 @@ Return ONLY JSON, no extra text.
 
 
 def final_dedup_check(
-    top_by_cat: dict,
     by_category: dict,
     category_keys: list,
-    final_cap: int,
     config: dict,
 ) -> int:
     """
-    AI-powered final dedup across all winner articles. Runs up to 3 iterations.
-    Mutates top_by_cat in place. Returns number of iterations run.
+    AI-powered final dedup across ALL scored articles (full pool, not just top N).
+    Mutates by_category in place by removing duplicates. Runs up to 3 iterations.
+    Returns number of iterations run.
     """
     model = config["scoring"]["model"]
     max_iterations = 3
 
     for iteration in range(1, max_iterations + 1):
-        # Build a flat indexed list of all winners with their category
-        flat = []
+        # Build a flat indexed list of all scored articles with their category
         index_map = {}  # global_index → (cat_key, local_index)
         gi = 0
         lines = []
         for cat_key in category_keys:
-            articles = top_by_cat.get(cat_key, [])
+            articles = by_category.get(cat_key, [])
             if not articles:
                 continue
             cat_label = cat_key.replace("_", " ").upper()
@@ -273,16 +271,19 @@ def final_dedup_check(
                     lines.append(f"    {desc}")
                 lines.append("")
                 index_map[gi] = (cat_key, li)
-                flat.append(a)
                 gi += 1
 
         if gi == 0:
             break
 
+        logger.info("  Final dedup pass %d: checking %d articles across all categories", iteration, gi)
+
+        # Scale max_tokens to pool size — ~15 tokens per potential duplicate entry
+        max_tokens = min(gi * 15 + 100, 2000)
         prompt = _FINAL_DEDUP_PROMPT.format(articles_block="\n".join(lines))
         try:
             client = _get_client(model)
-            raw = _call(client, model, prompt, max_tokens=500)
+            raw = _call(client, model, prompt, max_tokens=max_tokens)
             result = _extract_json(raw)
 
             if isinstance(result, list):
@@ -296,33 +297,18 @@ def final_dedup_check(
 
             logger.info("  Final dedup pass %d: removing %d duplicate(s)", iteration, len(duplicates))
 
-            # Collect indices to remove (process highest first so local indices stay valid)
+            # Collect indices to remove (process highest local index first so pops stay valid)
             removals = []
             for dup in duplicates:
                 ri = dup.get("remove_index")
                 if ri is not None and ri in index_map:
                     removals.append(index_map[ri])
 
-            # Remove duplicates from top_by_cat
-            removed_cats = set()
+            # Remove duplicates from by_category
             for cat_key, local_idx in sorted(removals, key=lambda x: -x[1]):
-                articles = top_by_cat.get(cat_key, [])
+                articles = by_category.get(cat_key, [])
                 if local_idx < len(articles):
                     articles.pop(local_idx)
-                    removed_cats.add(cat_key)
-
-            # Backfill from by_category pool
-            for cat_key in removed_cats:
-                current = top_by_cat.get(cat_key, [])
-                current_urls = {a.get("url") for a in current}
-                pool = by_category.get(cat_key, [])
-                for candidate in pool:
-                    if len(current) >= final_cap:
-                        break
-                    if candidate.get("url") not in current_urls:
-                        current.append(candidate)
-                        current_urls.add(candidate.get("url"))
-                top_by_cat[cat_key] = current
 
             time.sleep(2)  # rate-limit courtesy
 
