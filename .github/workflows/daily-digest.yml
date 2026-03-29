@@ -2,8 +2,8 @@ name: Daily News Digest
 
 on:
   schedule:
-    - cron: '59 23 * * 0-4' # 7:59 AM HKT (UTC+8), Mon-Fri
-    - cron: '59 12 * * *'   # 7:59 AM EST (UTC-5), every day
+    - cron: '59 21 * * 0-4' # 7:59 AM HKT (UTC+8), Mon-Fri
+    - cron: '59 10 * * *'   # 7:59 AM EST (UTC-5), every day
   workflow_dispatch:
     inputs:
       audience:
