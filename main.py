@@ -257,6 +257,10 @@ def build_digest(config: dict, no_score: bool = False, verbose: bool = False, de
     logger.info("━━ Step 1 — Fetching all sources into one pool ━━")
     pool, source_log = fetch_all_articles(config)
 
+    if len(pool) < 50:
+        logger.info("Only %d articles from 24h window — retrying with 48h cutoff", len(pool))
+        pool, source_log = fetch_all_articles(config, cutoff_hours=48)
+
     if verbose:
         print_source_summary(source_log)
 

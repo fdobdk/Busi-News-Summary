@@ -159,7 +159,7 @@ def _fetch_rss(
         return [], f"error:{exc}"
 
 
-def fetch_all_articles(config: dict) -> Tuple[List[dict], List[dict]]:
+def fetch_all_articles(config: dict, cutoff_hours: int = 24) -> Tuple[List[dict], List[dict]]:
     """
     Fetch from ALL sources into a single flat pool.  Returns (articles, source_log).
 
@@ -169,7 +169,7 @@ def fetch_all_articles(config: dict) -> Tuple[List[dict], List[dict]]:
 
     URL-level dedup ensures each article appears exactly once.
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=cutoff_hours)
     settings = config.get("settings", {})
 
     source_log: List[dict] = []
@@ -196,6 +196,17 @@ def fetch_all_articles(config: dict) -> Tuple[List[dict], List[dict]]:
             "paywalled": bsource.get("paywalled", False),
         })
         logger.info("Broad RSS [%s] → %d articles", bsource["name"], added)
+
+    # ── Broad Google News queries ──
+    for gnews_query in settings.get("broad_google_news_queries", []):
+        fetched, status = _fetch_google_news(gnews_query, cutoff)
+        added = _add(fetched)
+        source_log.append({
+            "source": f"GNews: {gnews_query[:38]}",
+            "section": "Broad", "count": added,
+            "status": status, "paywalled": True,
+        })
+        logger.info("Broad GNews [%s...] → %d articles", gnews_query[:40], added)
 
     # ── Per-category: Google News queries + dedicated RSS feeds ──
     for category_key, category_cfg in config["categories"].items():

@@ -2,8 +2,8 @@ name: Daily News Digest
 
 on:
   schedule:
-    - cron: '59 21 * * 0-4' # 7:59 AM HKT (UTC+8), Mon-Fri
-    - cron: '59 10 * * *'   # 7:59 AM EST (UTC-5), every day
+    - cron: '59 22 * * 0-4' # 7:59 AM HKT (UTC+8), Mon-Fri
+    - cron: '29 11 * * *'   # 7:59 AM EST (UTC-5), every day
   workflow_dispatch:
     inputs:
       audience:
@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       github.event_name == 'workflow_dispatch' && (github.event.inputs.audience == 'hk' || github.event.inputs.audience == 'both')
-      || github.event_name == 'schedule' && github.event.schedule == '59 23 * * 0-4'
+      || github.event_name == 'schedule' && github.event.schedule == '59 22 * * 0-4'
 
     steps:
       - uses: actions/checkout@v4
@@ -49,7 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       github.event_name == 'workflow_dispatch' && (github.event.inputs.audience == 'est' || github.event.inputs.audience == 'both')
-      || github.event_name == 'schedule' && github.event.schedule == '59 12 * * *'
+      || github.event_name == 'schedule' && github.event.schedule == '29 11 * * *'
 
     steps:
       - uses: actions/checkout@v4

@@ -2,7 +2,7 @@
 
 scoring:
   model: "llama-3.3-70b-versatile"   # Groq model for scoring + rewriting
-  min_score: 4                       # only include articles scoring >= this
+  min_score: 3                       # only include articles scoring >= this
 
 email:
   subject: "VC/PE Daily News — {date}"
@@ -13,9 +13,14 @@ settings:
 
   broad_rss_sources:
     - { name: "Bloomberg Markets", url: "https://feeds.bloomberg.com/markets/news.rss", paywalled: true }
+    - { name: "Bloomberg Business", url: "https://feeds.bloomberg.com/business/news.rss", paywalled: true}
     - { name: "WSJ US News", url: "https://feeds.content.dowjones.io/public/rss/WSJcomUSBusiness", paywalled: true}
     - { name: "The Economist Business", url: "https://rss.app/feeds/lQIBJcYNLaAGDtub.xml", paywalled: true}
     - { name: "Reuters Deals", url: "https://rss.app/feeds/baxmyvPt86qReFkK.xml", paywalled: false}
+
+  broad_google_news_queries:
+    - 'site:bloomberg.com deal OR acquisition OR merger OR buyout OR "private credit" OR IPO OR lending'
+    - 'site:bloomberg.com "private equity" OR "venture capital" OR "direct lending" OR CLO OR BDC'
 
 categories:
   private_equity:
