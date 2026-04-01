@@ -6,7 +6,7 @@ scoring:
 
 email:
   subject: "VC/PE Daily News — {date}"
-  subscribers_file: "config/subscribers.json"
+  subscribers_file: "subscribers/subscribers.json"
 
 settings:
   final_articles_per_category: 5     # articles shown per section

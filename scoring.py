@@ -1,9 +1,9 @@
-"""
-scoring.py — Categorise, score, and rewrite articles via the Groq API.
+"""scoring.py — AI categorisation, scoring, dedup, and rewriting via the Groq API.
 
-Two public functions:
-  batch_categorize_and_score — assign category + score 1-5 (cheap, JSON-only output)
-  batch_rewrite              — rewrite summaries for top articles
+All Groq API interactions live here. Three public functions:
+  batch_categorize_and_score — assign category + score 1-5 for the full article pool
+  final_dedup_check          — AI-powered cross-category duplicate removal (up to 3 passes)
+  batch_rewrite              — rewrite summaries for the top articles per category
 """
 
 import json
@@ -100,14 +100,22 @@ funding rounds, and market-moving events over generic commentary.
 For each article, provide:
 1. category — exactly one of: PE, VC, PC, ASIA_IPO, US_IPO, or DISCARD
 2. score — 1 to 5:
-   5 — Named firm + dollar amount + discrete event (deal, fund close, IPO filing)
-   4 — Named firm + confirmed event, one detail missing (size or parties unknown)
-   3 — Named firms, analytical rather than breaking news
-   2 — Vague or speculative, no specific firm or deal
-   1 — Generic outlook, trend piece, or commentary
+   5 — Must-see for a VC/PE partner: major market-moving event, landmark deal, \
+       significant funding round, or breaking news with named firms and dollar amounts
+   4 — Important and timely: confirmed event with named firms, may be missing one \
+       detail (exact size or counterparty), but still highly relevant to the category
+   3 — Relevant to the category: covers named firms or specific developments, but \
+       more analytical or incremental rather than breaking or market-moving
+   2 — Tangentially relevant: mentions the sector but lacks specifics, speculative, \
+       or only loosely connected to the category
+   1 — Not relevant: generic commentary, opinion pieces, trend recaps, or articles \
+       that do not meaningfully relate to the category
 
 SOURCE PREFERENCES:
-Prefer sources from the following list: Bloomberg, Wallstreet Journal (WSJ), The Economist, Finantial Times, Reuters, The New York Times
+Prefer articles from reputable sources: Bloomberg, The Economist, Reuters, \
+Financial Times (FT), Wall Street Journal (WSJ), and other well-known established outlets. \
+Give a slight score boost (+1) to articles from these sources over lesser-known outlets \
+covering the same topic.
 
 CATEGORY DEFINITIONS:
 PE (private equity): buyouts, acquisitions by PE firms, fund closings, PE exits, take-privates, portfolio company deals
@@ -117,13 +125,8 @@ ASIA_IPO (Initial Public Offering): companies listing on HKEX, Tokyo Stock Excha
 US_IPO (Initial Public Offering): companies listing on NYSE/Nasdaq, S-1 filings, SPAC mergers, Startup, Series A, Series B, Series C, Series D, Seed
 DISCARD: doesn't fit any category, or not relevant to a VC/PE audience
 
-DEDUPLICATION:
-Some articles may cover the same story (same company, same event) from different sources. \
-When you spot duplicates, score only the BEST version and DISCARD the rest. \
-Prefer the version from the more reputable source (Bloomberg, WSJ, FT > other outlets). \
-If reputation is equal, prefer the non-paywalled source that gives readers a free view.
-
-Short descriptions are fine — some sources are paywalled. Score on the headline if needed.
+Short descriptions are fine — some sources are paywalled. Score on the headline if needed. \
+Do NOT deduplicate here — just categorise and score every article independently.
 
 ARTICLES:
 {articles_block}
@@ -143,12 +146,16 @@ _CATEGORY_MAP = {
 _BATCH_SIZE = 50  # max articles per AI categorisation call
 
 
-def _format_articles_block(articles: List[dict]) -> str:
-    """Format articles for the AI prompt — title + source + description."""
+def _format_article_block(articles: List[dict], include_source: bool = True) -> str:
+    """Format articles for AI prompts — title + optional source + description.
+
+    Used by both categorisation (with source) and rewrite (without source) prompts.
+    """
     lines = []
     for i, a in enumerate(articles):
         lines.append(f"[{i}] {a.get('title', '').strip()[:200]}")
-        lines.append(f"    Source: {a.get('source', '')}")
+        if include_source:
+            lines.append(f"    Source: {a.get('source', '')}")
         desc = (a.get("description") or "").strip()[:300]
         if desc:
             lines.append(f"    {desc}")
@@ -159,7 +166,7 @@ def _format_articles_block(articles: List[dict]) -> str:
 def _categorize_batch(articles: List[dict], model: str) -> None:
     """Categorise + score a single batch. Mutates articles in place."""
     prompt = _CATEGORIZE_PROMPT.format(
-        articles_block=_format_articles_block(articles)
+        articles_block=_format_article_block(articles)
     )
     # ~16 tokens per entry (index + category + score) + JSON overhead
     max_tokens = min(len(articles) * 20 + 60, 2000)
@@ -226,10 +233,15 @@ You are checking a curated news digest for duplicate stories. \
 Two articles are duplicates if they cover the SAME event/deal/announcement, \
 even if the wording or source differs.
 
-For each duplicate pair, keep the article from the MORE reputable source. \
-Source priority (highest first): Bloomberg, Wall Street Journal (WSJ), \
-The Economist, Financial Times (FT), Reuters, The New York Times. \
-If sources are equally reputable, keep the non-paywalled version.
+When choosing which duplicate to KEEP, apply these rules in order:
+1. Prefer the ORIGINAL source — the outlet that broke or first reported the story. \
+   Remove aggregator rewrites (e.g. "Reuters reports that…", "According to Bloomberg…") \
+   in favour of the original article itself.
+2. Prefer reputable sources. Priority (highest first): Bloomberg, The Economist, \
+   Reuters, Financial Times (FT), Wall Street Journal (WSJ), and other well-known \
+   established outlets. Lesser-known or niche sources should be removed when a \
+   reputable source covers the same story.
+3. If reputation is equal, prefer the non-paywalled version.
 
 If a duplicate appears across different categories, re-evaluate which \
 category is the BEST fit and keep it there.
@@ -240,32 +252,45 @@ ARTICLES (grouped by category):
 If there are NO duplicates, return exactly: {{"duplicates": []}}
 
 If there ARE duplicates, return:
-{{"duplicates": [{{"remove_index": 3, "reason": "duplicate of index 1, same Apollo deal, keeping Bloomberg version"}}]}}
+{{"duplicates": [{{"remove_index": 3, "reason": "duplicate of index 1, same Apollo deal, keeping Bloomberg original over aggregator rewrite"}}]}}
 
 Return ONLY JSON, no extra text.
 """
 
 
 def final_dedup_check(
-    by_category: dict,
+    top_by_cat: dict,
+    reserve_by_cat: dict,
     category_keys: list,
     config: dict,
+    final_cap: int = 5,
 ) -> int:
     """
-    AI-powered final dedup across ALL scored articles (full pool, not just top N).
-    Mutates by_category in place by removing duplicates. Runs up to 3 iterations.
-    Returns number of iterations run.
+    AI-powered final dedup across the top picks per category.
+    Runs up to 4 iterations. Each pass:
+      1. Send top picks to AI to find duplicates across/within categories
+      2. AI picks the best category + source for each duplicate story
+      3. Remove the losing article from its category
+      4. Backfill from the reserve pool so each category stays at final_cap
+
+    Mutates top_by_cat in place. Returns number of iterations run.
     """
     model = config["scoring"]["model"]
-    max_iterations = 3
+    max_iterations = 4
+
+    # Track which reserve articles are already in top picks (by URL)
+    used_urls = set()
+    for cat_key in category_keys:
+        for a in top_by_cat.get(cat_key, []):
+            used_urls.add(a.get("url"))
 
     for iteration in range(1, max_iterations + 1):
-        # Build a flat indexed list of all scored articles with their category
+        # Build a flat indexed list of top articles grouped by category
         index_map = {}  # global_index → (cat_key, local_index)
         gi = 0
         lines = []
         for cat_key in category_keys:
-            articles = by_category.get(cat_key, [])
+            articles = top_by_cat.get(cat_key, [])
             if not articles:
                 continue
             cat_label = cat_key.replace("_", " ").upper()
@@ -285,7 +310,6 @@ def final_dedup_check(
 
         logger.info("  Final dedup pass %d: checking %d articles across all categories", iteration, gi)
 
-        # Scale max_tokens to pool size — ~15 tokens per potential duplicate entry
         max_tokens = min(gi * 15 + 100, 2000)
         prompt = _FINAL_DEDUP_PROMPT.format(articles_block="\n".join(lines))
         try:
@@ -311,11 +335,25 @@ def final_dedup_check(
                 if ri is not None and ri in index_map:
                     removals.append(index_map[ri])
 
-            # Remove duplicates from by_category
+            # Remove duplicates and track which categories lost articles
+            cats_needing_backfill = set()
             for cat_key, local_idx in sorted(removals, key=lambda x: -x[1]):
-                articles = by_category.get(cat_key, [])
+                articles = top_by_cat.get(cat_key, [])
                 if local_idx < len(articles):
-                    articles.pop(local_idx)
+                    removed = articles.pop(local_idx)
+                    used_urls.discard(removed.get("url"))
+                    cats_needing_backfill.add(cat_key)
+
+            # Backfill: pull next-best article from reserve into categories that lost one
+            for cat_key in cats_needing_backfill:
+                top = top_by_cat.get(cat_key, [])
+                reserve = reserve_by_cat.get(cat_key, [])
+                while len(top) < final_cap and reserve:
+                    candidate = reserve.pop(0)
+                    if candidate.get("url") not in used_urls:
+                        top.append(candidate)
+                        used_urls.add(candidate.get("url"))
+                        break
 
             time.sleep(2)  # rate-limit courtesy
 
@@ -342,18 +380,6 @@ Return ONLY a JSON array, no extra text:
 """
 
 
-def _format_rewrite_block(articles: List[dict]) -> str:
-    """Rewrite formatter — title + description only."""
-    lines = []
-    for i, a in enumerate(articles):
-        lines.append(f"[{i}] {a.get('title', '').strip()[:200]}")
-        desc = (a.get("description") or "").strip()[:300]
-        if desc:
-            lines.append(f"    {desc}")
-        lines.append("")
-    return "\n".join(lines)
-
-
 def batch_rewrite(articles: List[dict], config: dict) -> List[dict]:
     """
     Rewrite summaries for a list of articles in a single API call.
@@ -364,7 +390,7 @@ def batch_rewrite(articles: List[dict], config: dict) -> List[dict]:
         return []
 
     model = config["scoring"]["model"]
-    prompt = _REWRITE_PROMPT.format(rewrite_block=_format_rewrite_block(articles))
+    prompt = _REWRITE_PROMPT.format(rewrite_block=_format_article_block(articles, include_source=False))
 
     try:
         client = _get_client(model)

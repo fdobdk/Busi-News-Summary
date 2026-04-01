@@ -43,7 +43,7 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
-        run: python main.py --subscribers config/subscribers_hk.json
+        run: python main.py --subscribers subscribers/hkt.json
 
   digest-est:
     runs-on: ubuntu-latest
@@ -68,4 +68,4 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
-        run: python main.py --subscribers config/subscribers_est.json
+        run: python main.py --subscribers subscribers/est.json

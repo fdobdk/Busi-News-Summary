@@ -36,13 +36,15 @@ The AI is the core feature. Rather than using keyword matching to sort articles 
 ```
 News_Summary/
 │
-├── main.py                  Entry point — runs the full pipeline
+├── main.py                  Entry point — CLI parsing + pipeline orchestration
 ├── sources.py               Fetches articles from ALL sources into one flat pool
-│                            (Google News, RSS, NewsAPI — no category routing)
-├── scoring.py               AI categorisation + scoring, then summary rewriting
-│                            All Groq API calls live here (2 calls per run)
+│                            (Google News RSS, broad RSS — no category routing)
+├── filters.py               Finance gate (keyword relevance filter) and debug logging
 ├── dedup.py                 Fuzzy deduplication via rapidfuzz (threshold 75/100)
-├── send.py                  Loads subscribers, sends HTML email via Resend
+├── scoring.py               AI categorisation + scoring, cross-batch dedup, summary rewriting
+│                            All Groq API calls live here (2-3 calls per run)
+├── render.py                HTML email rendering (Jinja2), terminal output, date formatting
+├── send.py                  Loads subscribers, sends HTML email via Gmail SMTP
 │
 ├── .gitignore               Excludes config/.env, __pycache__, generated files
 │
@@ -51,8 +53,12 @@ News_Summary/
 │   ├── email_template.html  Jinja2 HTML email layout (edit to change design)
 │   ├── .env                 API keys (secret — git-ignored)
 │   ├── .env.example         API key template — copy to .env and fill in
-│   ├── requirements.txt     Python dependencies (pip install -r config/requirements.txt)
-│   └── subscribers.json     Recipient list (JSON array of {email, name})
+│   └── requirements.txt     Python dependencies (pip install -r config/requirements.txt)
+│
+├── subscribers/
+│   ├── subscribers.json     Default recipient list (JSON array of {email, name})
+│   ├── subscribers_est.json EST timezone subscriber list
+│   └── subscribers_hk.json  HKT timezone subscriber list
 │
 ├── docs/
 │   └── documentation.md     This file
@@ -64,19 +70,22 @@ News_Summary/
 ### Data flow
 
 ```
-sources.py                         main.py                         scoring.py
-──────────                         ───────                         ──────────
-Broad RSS (Bloomberg)  ─┐
-NewsAPI broad query    ─┤
-Google News queries    ─┤──→ One flat pool ──→ Finance gate ──→ Global dedup
-Per-category RSS feeds ─┘                                          │
-                                                      AI Call 1: categorise + score
-                                                                   │
-                                                      Group by category, top 5 each
-                                                                   │
-                                                      AI Call 2: rewrite winners
-                                                                   │
-                                                      Render HTML ──→ Send email
+sources.py          filters.py       dedup.py         scoring.py          render.py    send.py
+──────────          ──────────       ────────         ──────────          ─────────    ───────
+Broad RSS       ─┐
+Broad GNews     ─┤
+Category GNews  ─┤──→ Flat pool ──→ Finance gate ──→ Global dedup ──→ AI categorise
+Category RSS    ─┘                                                    + score
+                                                                         │
+                                                                   Group by category
+                                                                   top 5 each
+                                                                         │
+                                                                   Final AI dedup
+                                                                   (up to 3 passes)
+                                                                         │
+                                                                   AI rewrite winners
+                                                                         │
+                                                                   Render HTML ──→ Send email
 ```
 
 ---
@@ -86,23 +95,23 @@ Per-category RSS feeds ─┘                                          │
 The pipeline runs in these steps:
 
 ```
-Fetch all sources  →  Finance gate  →  Global dedup  →  AI categorise + score  →  AI rewrite winners  →  Render  →  Send
+Fetch all sources  →  Finance gate  →  Global dedup  →  AI categorise + score  →  Final AI dedup  →  AI rewrite winners  →  Render  →  Send
 ```
 
 ### Step 1 — Fetch
 
 ALL articles are fetched into a single flat pool — no category assignment yet:
 
-- **Broad RSS feeds** (e.g. Bloomberg Markets) — fetched once
-- **NewsAPI broad query** — one API call covering all topic keywords
+- **Broad RSS feeds** (e.g. Bloomberg Markets, WSJ, Economist, Reuters) — fetched once
+- **Broad Google News queries** — Bloomberg-specific finance queries
 - **Per-category Google News queries** — fetched from config but pooled together
 - **Per-category RSS feeds** — dedicated sources, also pooled
 
-Only articles from the last 24 hours are kept. All feeds have a 15-second timeout. URL-level dedup removes exact duplicates during fetching.
+Only articles from the last 24 hours are kept (falls back to 48 hours if fewer than 50 articles). All feeds have a 15-second timeout. URL-level dedup removes exact duplicates during fetching.
 
 ### Step 2 — Finance gate
 
-A cheap, universal relevance check. If the article title and description contain none of these finance terms, it's discarded:
+A cheap, universal relevance check (lives in `filters.py`). If the article title and description contain none of these finance terms, it's discarded:
 
 > deal, acquire, fund, raise, IPO, listing, invest, lend, loan, credit, startup, merger, buyout, stake, billion, million, venture, equity, debt, default, exit, portfolio
 
@@ -121,16 +130,19 @@ The entire deduplicated pool is sent to Groq in one batch (split into chunks of 
 
 This eliminates all overlap by design — one article, one category, decided by the AI which understands context far better than keyword matching.
 
-### Step 5 — AI rewrite (winners only)
+### Step 5 — Final AI dedup
 
-Articles scoring >= `min_score` (default 4) are grouped by category, top 5 per category are kept. Only these winners (at most 25 articles) are sent for summary rewriting. Summaries lead with key specifics the headline misses, followed by market context.
+After scoring, a second AI pass checks for duplicate stories across all categories (up to 3 iterations). This catches duplicates that fuzzy matching missed — e.g. articles with different wording but covering the same deal. Prefers more reputable sources (Bloomberg, WSJ, FT).
 
-### Step 6 — Send
+### Step 6 — AI rewrite (winners only)
 
-The digest is rendered into an HTML email using the Jinja2 template and delivered via Resend.
+Articles scoring >= `min_score` (default 3) are grouped by category, top 5 per category are kept. Only these winners (at most 25 articles) are sent for summary rewriting. Summaries lead with key specifics the headline misses, followed by market context.
 
-**Total Groq API calls per run:** 1-2 for categorise+score (depends on pool size) + 1 for rewrite = 2-3 calls.
-**Total NewsAPI calls per run:** 1 broad query.
+### Step 7 — Send
+
+The digest is rendered into an HTML email using the Jinja2 template (`render.py`) and delivered via Gmail SMTP (`send.py`).
+
+**Total Groq API calls per run:** 1-2 for categorise+score (depends on pool size) + 1-3 for final dedup + 1 for rewrite = 3-6 calls.
 
 ---
 
@@ -138,8 +150,7 @@ The digest is rendered into an HTML email using the Jinja2 template and delivere
 
 - Python 3.11 or higher
 - A Groq account (free, no credit card) at console.groq.com
-- A NewsAPI key (optional) at newsapi.org
-- A Resend account at resend.com with a verified sender domain
+- A Gmail account with an App Password for SMTP sending
 
 ---
 
@@ -159,8 +170,8 @@ Open `config/.env` and replace the placeholder values:
 
 ```
 GROQ_API_KEY=gsk_...
-NEWSAPI_API_KEY=...
-RESEND_API_KEY=re_...
+GMAIL_ADDRESS=your_gmail@gmail.com
+GMAIL_APP_PASSWORD=your_app_password_here
 ```
 
 Never commit `config/.env` to git or share it.
@@ -168,16 +179,14 @@ Never commit `config/.env` to git or share it.
 | Key | Source |
 |---|---|
 | `GROQ_API_KEY` | console.groq.com/keys |
-| `NEWSAPI_API_KEY` | newsapi.org (Account page) |
-| `RESEND_API_KEY` | resend.com (Settings > API Keys) |
-
-NewsAPI is optional. The digest will still run using Google News RSS and specialty RSS feeds if the key is not set. The free plan allows 100 requests/day. Once exhausted, the script automatically skips NewsAPI for that run.
+| `GMAIL_ADDRESS` | Your Gmail address |
+| `GMAIL_APP_PASSWORD` | Google Account > Security > App Passwords |
 
 ---
 
 ## Subscribers
 
-Edit `config/subscribers.json`:
+Edit `subscribers/subscribers.json`:
 
 ```json
 [
@@ -188,6 +197,8 @@ Edit `config/subscribers.json`:
 
 A `subscribers.csv` file with `email` and `name` columns also works. Update `subscribers_file` in `config/config.yaml` to point to it.
 
+Multiple subscriber lists are supported for different timezones (e.g. `subscribers_hk.json`, `subscribers_est.json`). Override at runtime with `--subscribers subscribers/subscribers_hk.json`.
+
 ---
 
 ## config.yaml
@@ -196,17 +207,16 @@ A `subscribers.csv` file with `email` and `name` columns also works. Update `sub
 
 | Key | Purpose |
 |---|---|
-| `newsapi_language` | Language filter for NewsAPI (default `"en"`) |
 | `final_articles_per_category` | Hard cap on articles shown per section in the final digest |
 | `broad_rss_sources` | RSS feeds fetched once into the global pool |
-| `newsapi_broad_query` | Single NewsAPI query covering all categories |
+| `broad_google_news_queries` | Google News queries for broad financial coverage |
 
 ### Scoring block
 
 ```yaml
 scoring:
   model: "llama-3.3-70b-versatile"
-  min_score: 4
+  min_score: 3
 ```
 
 Available Groq models (all free, limits reset daily):
@@ -221,9 +231,8 @@ Available Groq models (all free, limits reset daily):
 
 ```yaml
 email:
-  from: "digest@yourdomain.com"
   subject: "VC/PE Daily News — {date}"
-  subscribers_file: "setup/subscribers.json"
+  subscribers_file: "subscribers/subscribers.json"
 ```
 
 ### Category block structure
@@ -272,13 +281,13 @@ Summaries are written by the AI to complement the headline, not restate it:
 
 | Source type | Sources |
 |---|---|
-| Broad RSS | Bloomberg Markets |
-| NewsAPI | 1 broad query |
+| Broad RSS | Bloomberg Markets, Bloomberg Business, WSJ US News, The Economist, Reuters |
+| Broad GNews | Bloomberg-specific finance queries |
 | PE RSS | FT PE |
 | VC RSS | TechCrunch Venture, AlleyWatch |
-| Asia RSS | Nikkei Asia, DealStreetAsia, FinanceAsia, e27, KrASIA, SCMP Business, Asia Financial, AVCJ |
+| Asia RSS | FinanceAsia, SCMP Business, Asia Financial |
 | US IPO RSS | Dealroom |
-| Google News | 25 queries across all categories |
+| Google News | 31+ queries across all categories |
 
 ### Removed sources
 
@@ -298,11 +307,12 @@ Summaries are written by the AI to complement the headline, not restate it:
 python main.py --dry-run                  # full pipeline, no email sent
 python main.py --dry-run --verbose        # also prints per-source fetch summary
 python main.py --dry-run --no-score       # skips AI scoring (fastest test)
+python main.py --dry-run --debug          # saves PC keyword debug JSON
 ```
 
 `--dry-run` saves `preview/email_preview.html`. Open it in a browser to preview the email.
 
-Use `--no-score` to verify sources return relevant articles before spending API calls. Use `--verbose` to diagnose which sources succeed or fail.
+Use `--no-score` to verify sources return relevant articles before spending API calls. Use `--verbose` to diagnose which sources succeed or fail. Use `--debug` to save a JSON file analyzing Private Credit keyword matches vs AI assignments.
 
 ---
 
@@ -310,16 +320,26 @@ Use `--no-score` to verify sources return relevant articles before spending API 
 
 ```bash
 python main.py
+python main.py --subscribers subscribers/subscribers_hk.json   # HKT audience
+python main.py --subscribers subscribers/subscribers_est.json   # EST audience
 ```
 
 Confirm before going live:
-- Sender domain is verified in Resend
-- `config/subscribers.json` has the correct addresses
-- The `from` address in `config/config.yaml` matches your verified domain
+- `GMAIL_ADDRESS` and `GMAIL_APP_PASSWORD` are set in `config/.env`
+- `subscribers/subscribers.json` has the correct addresses
 
 ---
 
 ## Scheduling
+
+### GitHub Actions (current setup)
+
+The project includes a GitHub Actions workflow (`.github/workflows/daily-digest.yml`) that runs two parallel jobs:
+
+- **HKT digest** — runs at 23:29 UTC Sun-Thu (7:59 AM HKT) using `subscribers_hk.json`
+- **EST digest** — runs at 11:19 UTC daily (7:19 AM EST) using `subscribers_est.json`
+
+Manual dispatch is also supported via the Actions tab with audience selection (hk, est, or both).
 
 ### Windows (Task Scheduler)
 
@@ -342,11 +362,11 @@ Confirm before going live:
 **The digest is empty for a section. Why?**
 Three likely causes: (1) RSS feeds had no articles in the last 24 hours, (2) all articles were filtered out by the finance gate, or (3) the AI scored everything below the threshold. Run with `--no-score --verbose` to diagnose.
 
-**I see 429 errors from NewsAPI.**
-Your daily quota (100 requests/day on the free plan) is exhausted. The script automatically skips NewsAPI for that run. Other sources continue normally. Resets at midnight UTC.
+**I see 429 errors from Groq.**
+Your rate limit has been hit. The script retries up to 3 times with increasing backoff (10s, 20s, 30s). If it persists, wait for the daily limit to reset or switch to a smaller model with higher limits in `config/config.yaml`.
 
 **How much does this cost per day?**
-Nothing on default settings. Groq, Resend (up to 100 emails/day), and NewsAPI are all free tier.
+Nothing on default settings. Groq is free tier and Gmail SMTP has no per-email cost.
 
 **Can I add a new category?**
 Yes. Add a new category block in `config/config.yaml` with `google_news_queries` and optional `rss_sources`. The AI prompt in `scoring.py` also needs the new category added to `_CATEGORIZE_PROMPT` and `_CATEGORY_MAP`. Then add the section to the colour map in `config/email_template.html` if needed.
@@ -362,3 +382,9 @@ The AI assigns categories based on the headline and description. If a source con
 
 **What if the AI categorisation call fails?**
 All articles get score 0 and the digest will be empty for that run. A warning is logged. The pipeline does not crash.
+
+**Where is the finance gate logic?**
+In `filters.py`. The keyword list (`_FINANCE_GATE_WORDS`) and the `finance_gate()` function live there.
+
+**Where is the HTML rendering logic?**
+In `render.py`. This includes the Jinja2 template rendering, date formatting (EST/HKT dual timezone), terminal digest output, and category display name generation.
