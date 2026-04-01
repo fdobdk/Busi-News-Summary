@@ -63,9 +63,8 @@ def _fmt_pub_date(iso_str: str) -> str:
 
         est_label = est.strftime("%Z")   # "EST" or "EDT"
         return (
-            f"{est.strftime('%b %d')} · "
-            f"{est.month:02d}-{est.day} {_12h(est)} {est_label} / "
-            f"{hkt.month:02d}-{hkt.day} {_24h(hkt)} HKT"
+            f"{est.strftime('%b')} {est.day} {_12h(est)} {est_label} / "
+            f"{hkt.strftime('%b')} {hkt.day} {_24h(hkt)} HKT"
         )
     except Exception:
         return ""
