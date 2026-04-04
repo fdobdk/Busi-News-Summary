@@ -1,8 +1,11 @@
-# VC/PE Daily Digest — see docs/documentation.md for full details.
+# VC/PE Daily Digest — pipeline configuration
 
 scoring:
-  model: "llama-3.3-70b-versatile"   # Groq model for scoring + rewriting
-  min_score: 3                       # only include articles scoring >= this
+  scoring_model: "llama-3.3-70b-versatile"   # Groq model for categorize + score (needs strong reasoning)
+  dedup_model: "llama-3.3-70b-versatile"     # Groq model for AI dedup (needs strong reasoning)
+  rewrite_model: "llama-3.3-70b-versatile"      # Groq model for headline/summary rewrite (fast, high rate limit)
+  min_score: 3                               # only include articles scoring >= this
+  batch_size: 40                             # articles per AI scoring batch
 
 email:
   subject: "VC/PE Daily News — {date}"
@@ -11,12 +14,54 @@ email:
 settings:
   final_articles_per_category: 5     # articles shown per section
 
+  # Source reputation tiers (used by dedup to pick the better source)
+  source_reputation:
+    tier_1:
+      - bloomberg.com
+      - wsj.com
+      - ft.com
+      - reuters.com
+      - cnbc.com
+      - barrons.com
+    tier_2:
+      - techcrunch.com
+      - privateequitywire.co.uk
+      - altassets.net
+      - financeasia.com
+      - asia.nikkei.com
+      - alleywatch.com
+      - scmp.com
+      - asiafinancial.com
+      - dealroom.net
+    # tier_3: everything else (Google News / Brave aggregated results)
+
+  # Premium domains bypass the finance-gate filter entirely
+  premium_domains:
+    - bloomberg.com
+    - wsj.com
+    - ft.com
+    - reuters.com
+    - cnbc.com
+    - barrons.com
+
   broad_rss_sources:
+    # Bloomberg native RSS
     - { name: "Bloomberg Markets", url: "https://feeds.bloomberg.com/markets/news.rss", paywalled: true }
-    - { name: "Bloomberg Business", url: "https://feeds.bloomberg.com/business/news.rss", paywalled: true}
-    - { name: "WSJ US News", url: "https://feeds.content.dowjones.io/public/rss/WSJcomUSBusiness", paywalled: true}
-    - { name: "The Economist Business", url: "https://rss.app/feeds/lQIBJcYNLaAGDtub.xml", paywalled: true}
-    - { name: "Reuters Deals", url: "https://rss.app/feeds/baxmyvPt86qReFkK.xml", paywalled: false}
+    - { name: "Bloomberg Business", url: "https://feeds.bloomberg.com/business/news.rss", paywalled: true }
+    # WSJ native RSS
+    - { name: "WSJ US Business", url: "https://feeds.content.dowjones.io/public/rss/WSJcomUSBusiness", paywalled: true }
+    - { name: "WSJ Business", url: "https://feeds.content.dowjones.io/public/rss/RSSWSJD", paywalled: true }
+    - { name: "WSJ Markets", url: "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain", paywalled: true }
+    # CNBC native RSS
+    - { name: "CNBC Business", url: "https://www.cnbc.com/id/10001147/device/rss/rss.html", paywalled: true }
+    - { name: "CNBC Finance", url: "https://www.cnbc.com/id/10000664/device/rss/rss.html", paywalled: true }
+    - { name: "CNBC Investing", url: "https://www.cnbc.com/id/15839069/device/rss/rss.html", paywalled: true }
+    - { name: "CNBC Asia Pacific", url: "https://www.cnbc.com/id/19832390/device/rss/rss.html", paywalled: true }
+    # Google News allinurl: feeds (for sources without reliable native RSS)
+    - { name: "Reuters Deals", url: "https://news.google.com/rss/search?q=when:24h+allinurl:reuters.com+deal+OR+acquisition+OR+fund+OR+IPO&ceid=US:en&hl=en-US&gl=US", paywalled: true }
+    - { name: "FT Deals", url: "https://news.google.com/rss/search?q=when:24h+allinurl:ft.com+deal+OR+acquisition+OR+fund+OR+equity&ceid=US:en&hl=en-US&gl=US", paywalled: true }
+    - { name: "The Economist Business", url: "https://news.google.com/rss/search?q=when:7d+allinurl:economist.com+business+OR+finance+OR+deal&ceid=US:en&hl=en-US&gl=US", paywalled: true }
+    - { name: "Bloomberg Deals", url: "https://news.google.com/rss/search?q=when:24h+allinurl:bloomberg.com+deal+OR+acquisition+OR+buyout+OR+%22private+equity%22+OR+%22private+credit%22&ceid=US:en&hl=en-US&gl=US", paywalled: true }
 
   broad_google_news_queries:
     - 'site:bloomberg.com deal OR acquisition OR merger OR buyout OR "private credit" OR IPO OR lending'
@@ -30,8 +75,11 @@ categories:
       - 'LBO OR "leveraged buyout" OR "take private" OR "going private"'
       - '"PE-backed" OR "sponsor-backed" OR "portfolio company" deal'
       - 'site:wsj.com "private equity" OR "buyout" OR "LBO"'
+    brave_query: '"private equity" buyout OR acquisition OR fund'
     rss_sources:
       - { name: "FT PE",               url: "https://www.ft.com/private-equity?format=rss",          paywalled: true  }
+      - { name: "Private Equity Wire", url: "https://www.privateequitywire.co.uk/rss.xml",           paywalled: false }
+      - { name: "AltAssets",           url: "https://www.altassets.net/feed",                         paywalled: false }
 
   venture_capital:
     google_news_queries:
@@ -40,6 +88,7 @@ categories:
       - '"venture capital" investment round raised'
       - '"funding round" startup raised OR "VC-backed" OR unicorn'
       - 'site:wsj.com "venture capital" OR "Series A" OR "Series B" OR "startup funding"'
+    brave_query: '"venture capital" startup funding round raised'
     rss_sources:
       - { name: "TechCrunch Venture",  url: "https://techcrunch.com/category/venture/feed/",         paywalled: false }
       - { name: "AlleyWatch",          url: "https://www.alleywatch.com/feed/",                      paywalled: false }
@@ -55,7 +104,8 @@ categories:
       - '"private credit" CLO OR BDC OR lending'
       - '"direct lending" fund OR deal OR billion'
       - 'BCRED OR HLEND OR "Owl Rock" OR "Ares Capital" OR "Apollo Debt"'
-    rss_sources:
+    brave_query: '"private credit" OR "direct lending" OR BDC OR CLO'
+    rss_sources: []
 
   asia_ipo:
     display_name: "ASIA IPO & STARTUPS"
@@ -68,10 +118,12 @@ categories:
       - 'site:asia.nikkei.com IPO OR listing OR startup funding'
       - 'site:dealstreetasia.com IPO OR listing OR startup'
       - 'site:kr-asia.com IPO OR listing OR startup funding'
+    brave_query: 'Asia IPO listing HKEX SGX Tokyo startup'
     rss_sources:
-      - { name: "FinanceAsia",    url: "https://financeasia.com/rss/latest",     paywalled: false }
-      - { name: "SCMP Business",  url: "https://www.scmp.com/rss/5/feed",        paywalled: true  }
-      - { name: "Asia Financial", url: "https://www.asiafinancial.com/feed",     paywalled: false }
+      - { name: "FinanceAsia",    url: "https://financeasia.com/rss/latest",          paywalled: false }
+      - { name: "SCMP Business",  url: "https://www.scmp.com/rss/5/feed",             paywalled: true  }
+      - { name: "Asia Financial", url: "https://www.asiafinancial.com/feed",          paywalled: false }
+      - { name: "Nikkei Asia",   url: "https://asia.nikkei.com/rss/feed",             paywalled: true  }
 
   us_ipo:
     google_news_queries:
@@ -80,5 +132,6 @@ categories:
       - '"initial public offering" priced OR filed'
       - '"going public" OR "public debut" NYSE OR Nasdaq'
       - 'site:wsj.com IPO OR "S-1" OR "goes public" NYSE OR Nasdaq'
+    brave_query: 'IPO NYSE Nasdaq "S-1 filing" "goes public"'
     rss_sources:
       - { name: "Dealroom", url: "https://dealroom.net/blog/rss.xml",  paywalled: false }

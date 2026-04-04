@@ -179,8 +179,8 @@
                 {{ article.rewritten_summary or article.description }}
               </p>
               <p class="article-meta">
-                {{ article.source }}
-                {% set pub = article.published_at | fmt_pub_date %}
+                {{ article.source_name }}
+                {% set pub = article.published_date | fmt_pub_date %}
                 {% if pub %}&nbsp;&middot;&nbsp;{{ pub }}{% endif %}
               </p>
               {% if article.url %}
@@ -195,7 +195,7 @@
           {% endfor %}
 
         {% else %}
-          <p class="no-articles">No qualifying articles today.</p>
+          <p class="no-articles">No significant news today.</p>
         {% endif %}
 
       </div>

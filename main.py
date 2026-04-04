@@ -2,20 +2,20 @@
 """main.py — Orchestrates the VC/PE Daily Digest pipeline.
 
 Entry point and pipeline coordinator. Parses CLI arguments, loads config,
-and runs the 6-step digest pipeline:
-  1. Fetch ALL sources into one article pool       (sources.py)
-  2. Finance gate — discard off-topic noise         (filters.py)
-  3. Global fuzzy dedup by title similarity          (dedup.py)
-  4. AI categorise + score the entire pool           (scoring.py)
-  5. Group by category, top N, final cross-batch dedup
-  6. AI rewrite only the winners                     (scoring.py)
+and runs the 7-step digest pipeline:
+  1. Fetch ALL sources into one global pool           (sources.py)
+  2. Fuzzy headline dedup — local, zero AI cost       (dedup.py)
+  3. Finance-gate filter — local, zero AI cost        (filter.py)
+  4. AI categorize + score in batches of 40           (scoring.py)
+  5. Greedy cross-category selection — local           (selection.py)
+  6. AI rewrite + final semantic dedup per category   (rewrite.py)
+  7. Render HTML email + send via Gmail SMTP          (render.py, send.py)
 """
 
 import argparse
 import logging
 import sys
 import time
-from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -23,9 +23,11 @@ import yaml
 from dotenv import load_dotenv
 
 from dedup import deduplicate
-from filters import finance_gate, save_debug_log
-from render import get_display_name, print_source_summary, print_terminal_digest, render_html
-from scoring import batch_categorize_and_score, batch_rewrite, final_dedup_check
+from filter import finance_gate
+from render import CATEGORY_KEY_MAP, get_display_name, print_source_summary, print_terminal_digest, render_html
+from rewrite import rewrite_all_categories
+from scoring import batch_categorize_and_score
+from selection import greedy_select
 from send import send_digest
 from sources import fetch_all_articles
 
@@ -42,23 +44,26 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def build_digest(config: dict, no_score: bool = False, verbose: bool = False, debug: bool = False) -> dict:
+def build_digest(config: dict, no_score: bool = False, verbose: bool = False) -> dict:
     """
     Full pipeline:
-      1. Fetch all sources → flat pool
-      2. Finance gate
-      3. Global fuzzy dedup
-      4. AI categorise + score  (or passthrough if --no-score)
-      5. Group by category, take top N
-      6. AI rewrite winners
+      1. Fetch all sources → flat global pool
+      2. Fuzzy headline dedup (local)
+      3. Finance-gate filter (local)
+      4. AI categorize + score
+      5. Greedy cross-category selection (local)
+      6. AI rewrite + final semantic dedup
+    Returns dict of {config_key: {"name": str, "articles": list}}.
     """
     settings = config.get("settings", {})
-    min_score = config.get("scoring", {}).get("min_score", 4)
+    min_score = config.get("scoring", {}).get("min_score", 3)
     final_cap = settings.get("final_articles_per_category", 5)
     category_keys = list(config["categories"].keys())
 
-    # ── Step 1: Fetch ──
-    logger.info("━━ Step 1 — Fetching all sources into one pool ━━")
+    t0 = time.time()
+
+    # ── Step 1: Fetch all sources ──
+    logger.info("━━ Step 1 — Fetching all sources into global pool ━━")
     pool, source_log = fetch_all_articles(config)
 
     if len(pool) < 50:
@@ -67,86 +72,86 @@ def build_digest(config: dict, no_score: bool = False, verbose: bool = False, de
 
     if verbose:
         print_source_summary(source_log)
+        logger.info("Step 1 complete: %d articles (%.1fs)", len(pool), time.time() - t0)
 
-    # ── Step 2: Finance gate ──
-    logger.info("━━ Step 2 — Finance gate ━━")
-    gated = finance_gate(pool)
-    logger.info("Finance gate: %d → %d articles", len(pool), len(gated))
+    # ── Step 2: Fuzzy headline dedup (local, zero AI cost) ──
+    t1 = time.time()
+    logger.info("━━ Step 2 — Fuzzy headline dedup ━━")
+    deduped = deduplicate(pool)
+    if verbose:
+        logger.info("Step 2 complete: %d → %d (%.1fs)", len(pool), len(deduped), time.time() - t1)
 
-    # ── Step 3: Global fuzzy dedup ──
-    logger.info("━━ Step 3 — Global dedup ━━")
-    deduped = deduplicate(gated)
+    # ── Step 3: Finance-gate filter (local, zero AI cost) ──
+    t2 = time.time()
+    logger.info("━━ Step 3 — Finance-gate filter ━━")
+    gated = finance_gate(deduped)
+    if verbose:
+        logger.info("Step 3 complete: %d → %d (%.1fs)", len(deduped), len(gated), time.time() - t2)
 
     if no_score:
-        # --no-score mode: skip AI, distribute articles round-robin into categories
-        logger.info("━━ Scoring SKIPPED (--no-score) — %d articles ━━", len(deduped))
+        # --no-score mode: skip AI, distribute articles round-robin
+        logger.info("━━ Scoring SKIPPED (--no-score) — %d articles ━━", len(gated))
         digest: dict = {}
+        remaining = list(gated)
         for cat_key in category_keys:
             display_name = get_display_name(cat_key, config)
-            articles = deduped[:final_cap]
-            deduped = deduped[final_cap:]
+            articles = remaining[:final_cap]
+            remaining = remaining[final_cap:]
             for a in articles:
                 a.setdefault("score", 5)
+                a.setdefault("rewritten_headline", a.get("title", ""))
                 a.setdefault("rewritten_summary", a.get("description", ""))
             digest[cat_key] = {"name": display_name, "articles": articles}
         return digest
 
-    # ── Step 4: AI categorise + score ──
-    logger.info("━━ Step 4 — AI categorise + score (%d articles) ━━", len(deduped))
-    pre_score_pool = list(deduped) if debug else []
-    scored = batch_categorize_and_score(deduped, config)
-    time.sleep(2)  # rate-limit courtesy before rewrite call
+    # ── Step 4: AI categorize + score ──
+    t3 = time.time()
+    logger.info("━━ Step 4 — AI categorize + score (%d articles) ━━", len(gated))
+    scored = batch_categorize_and_score(gated, config)
+    if verbose:
+        logger.info("Step 4 complete: %d scored, %d kept (%.1fs)", len(gated), len(scored), time.time() - t3)
 
-    if debug:
-        debug_path = save_debug_log(pre_score_pool, scored)
-        logger.info("Debug log saved → %s", debug_path)
+    # Filter by min_score
+    scored = [a for a in scored if a.get("score", 0) >= min_score]
+    logger.info("After min_score filter (>=%d): %d articles", min_score, len(scored))
 
-    # ── Step 5: Group by category, take top N per category ──
-    by_category = defaultdict(list)
-    for article in scored:
-        cat = article.get("section")
-        if cat in category_keys and article.get("score", 0) >= min_score:
-            by_category[cat].append(article)
+    # Rate-limit buffer between scoring and rewrite models
+    logger.info("Rate-limit buffer: waiting 15s before rewrite step...")
+    time.sleep(15)
 
-    # Sort each category by score desc, then recency desc
-    for cat in by_category:
-        by_category[cat].sort(
-            key=lambda a: (
-                -a.get("score", 0),
-                -(datetime.fromisoformat(a["published_at"]).timestamp()
-                  if a.get("published_at") else 0),
-            ),
-        )
+    # ── Step 5: Greedy cross-category selection (local, zero AI cost) ──
+    t4 = time.time()
+    logger.info("━━ Step 5 — Greedy cross-category selection ━━")
+    selected, reserves = greedy_select(scored, final_cap)
+    if verbose:
+        for cat, arts in selected.items():
+            logger.info("  %s: %d articles (+%d reserves)", cat, len(arts), len(reserves.get(cat, [])))
+        logger.info("Step 5 complete (%.1fs)", time.time() - t4)
 
-    # Take top N per category, keep remainder as reserve for backfill
-    top_by_cat = {}
-    reserve_by_cat = {}
-    for cat_key in category_keys:
-        full = by_category.get(cat_key, [])
-        top_by_cat[cat_key] = full[:final_cap]
-        reserve_by_cat[cat_key] = full[final_cap:]
+    # ── Step 6: Per-category AI dedup (max 3 passes) + rewrite ──
+    t5 = time.time()
+    total_selected = sum(len(v) for v in selected.values())
+    logger.info("━━ Step 6 — Per-category AI dedup + rewrite (%d articles) ━━", total_selected)
+    rewritten = rewrite_all_categories(selected, reserves, config, verbose=verbose)
+    if verbose:
+        logger.info("Step 6 complete (%.1fs)", time.time() - t5)
 
-    # ── Step 5b: Final AI dedup across top picks (with backfill from reserve) ──
-    total_top = sum(len(v) for v in top_by_cat.values())
-    logger.info("━━ Step 5b — Final cross-batch dedup (%d top articles) ━━", total_top)
-    iterations = final_dedup_check(top_by_cat, reserve_by_cat, category_keys, config, final_cap)
-    print(f"\n  Final dedup: {iterations} pass(es) run (max 4)\n")
-
-    winners = []
-    for cat_key in category_keys:
-        winners.extend(top_by_cat.get(cat_key, []))
-
-    # ── Step 6: Rewrite winners ──
-    logger.info("━━ Step 6 — Rewriting %d winner articles ━━", len(winners))
-    batch_rewrite(winners, config)
-
-    # ── Build digest sections ──
+    # ── Build digest sections (convert short codes → config keys) ──
     digest = {}
-    for cat_key in category_keys:
-        display_name = get_display_name(cat_key, config)
-        articles = top_by_cat.get(cat_key, [])
-        digest[cat_key] = {"name": display_name, "articles": articles}
+    for short_code, articles in rewritten.items():
+        config_key = CATEGORY_KEY_MAP.get(short_code, short_code)
+        display_name = get_display_name(short_code, config)
+        digest[config_key] = {"name": display_name, "articles": articles}
         logger.info("[%s] → %d article(s) in digest", display_name, len(articles))
+
+    # Ensure all categories appear even if empty
+    for cat_key in category_keys:
+        if cat_key not in digest:
+            display_name = get_display_name(cat_key, config)
+            digest[cat_key] = {"name": display_name, "articles": []}
+
+    if verbose:
+        logger.info("Total pipeline time: %.1fs", time.time() - t0)
 
     return digest
 
@@ -170,37 +175,29 @@ def main() -> None:
         "--preview-file",
         default="preview/email_preview.html",
         metavar="FILE",
-        help="Where to save the HTML preview in dry-run mode (default: preview/email_preview.html).",
+        help="Where to save the HTML preview in dry-run mode.",
     )
     parser.add_argument(
         "--no-score",
         action="store_true",
-        help="Skip AI scoring entirely — all fetched articles pass through. "
-             "Use for testing the pipeline without a Groq API key.",
+        help="Skip AI scoring entirely — distribute fetched articles round-robin.",
     )
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Print a per-source fetch summary showing which sources succeeded, "
-             "returned 0 articles, or errored (401/403/etc.).",
+        help="Print source fetch summary, article counts at each stage, and timing.",
     )
     parser.add_argument(
         "--subscribers",
         metavar="FILE",
-        help="Override the subscribers file from config (e.g. subscribers/subscribers_hk.json).",
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Save a debug JSON file showing all articles that matched Private Credit "
-             "keywords before AI scoring, what category the AI assigned, and what score.",
+        help="Override the subscribers file from config.",
     )
     args = parser.parse_args()
 
     load_dotenv(Path(__file__).parent / "config" / ".env")
 
     if args.no_score:
-        logger.info("Running in --no-score mode. AI scoring disabled — all articles will appear in the digest.")
+        logger.info("Running in --no-score mode. AI scoring disabled.")
 
     if not Path(args.config).exists():
         logger.error("Config file not found: %s", args.config)
@@ -212,7 +209,7 @@ def main() -> None:
     date_str = datetime.now().strftime("%B %d, %Y")
 
     try:
-        digest_sections = build_digest(config, no_score=args.no_score, verbose=args.verbose, debug=args.debug)
+        digest_sections = build_digest(config, no_score=args.no_score, verbose=args.verbose)
     except EnvironmentError as exc:
         logger.error("Configuration error: %s", exc)
         sys.exit(1)
@@ -220,10 +217,13 @@ def main() -> None:
         logger.error("Pipeline failed: %s", exc, exc_info=True)
         sys.exit(1)
 
+    # ── Step 7: Render HTML + send ──
     html = render_html(digest_sections, config, date_str)
 
     if args.dry_run:
-        Path(args.preview_file).write_text(html, encoding="utf-8")
+        preview_path = Path(args.preview_file)
+        preview_path.parent.mkdir(parents=True, exist_ok=True)
+        preview_path.write_text(html, encoding="utf-8")
         print_terminal_digest(digest_sections, date_str, args.preview_file)
         logger.info("Dry run complete — no emails sent.")
     else:

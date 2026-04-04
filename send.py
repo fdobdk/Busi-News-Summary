@@ -35,8 +35,7 @@ def load_subscribers(path: str) -> List[dict]:
 
 
 def send_digest(html: str, subject: str, config: dict, dry_run: bool = False) -> None:
-    """
-    Send *html* to every subscriber via Gmail SMTP.
+    """Send *html* to every subscriber via Gmail SMTP.
 
     In dry-run mode this is a no-op (the caller has already saved the preview).
     """
