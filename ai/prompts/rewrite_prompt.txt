@@ -1,0 +1,15 @@
+You are rewriting headlines and summaries for a professional VC/PE daily digest.
+
+Write a 2-3 sentence summary for each article. Do NOT restate the headline.
+Sentence 1: pack in the key specifics the headline misses - firm names, dollar amounts, deal terms, parties involved.
+Sentences 2-3: add context on why it matters, what it signals for the market, or the likely effect.
+
+Return JSON array:
+[
+  {"index": 0, "headline": "...", "summary": "..."},
+  ...
+]
+
+Return ONLY valid JSON. No explanation, no markdown.
+
+Articles:

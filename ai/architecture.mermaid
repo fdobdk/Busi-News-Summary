@@ -1,0 +1,21 @@
+flowchart LR
+    A[main.py: CLI + orchestration]
+    B[sources.py: fetch global article pool]
+    C[dedup.py: fuzzy global dedup]
+    D[filter.py: finance relevance gate]
+    E[scoring.py: AI categorize + score]
+    F[selection.py: greedy top picks]
+    G[rewrite.py: AI final dedup + rewrite]
+    H[render.py: HTML + terminal output]
+    I[send.py: subscribers + SMTP send]
+    J[(config/config.yaml)]
+    K[(ai/prompts/*.txt)]
+
+    J --> A
+    A --> B --> C --> D --> E --> F --> G --> H --> I
+    J --> B
+    J --> E
+    J --> F
+    J --> H
+    K --> E
+    K --> G

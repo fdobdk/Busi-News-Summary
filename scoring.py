@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import time
+from pathlib import Path
 from typing import List
 
 from groq import Groq
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 _client = None
 
-_CATEGORIZE_PROMPT = """\
+_DEFAULT_CATEGORIZE_PROMPT = """\
 You are a financial news curator for VC/PE professionals. For each article below, return a JSON array with:
 - "index": the article's index number
 - "category": one of "PE", "VC", "PC", "ASIA_IPO", "US_IPO", or "NONE"
@@ -55,6 +56,23 @@ Return ONLY valid JSON. No explanation, no markdown.
 
 Articles:
 """
+
+_PROMPTS_DIR = Path(__file__).parent / "ai" / "prompts"
+
+
+def _load_prompt(filename: str, fallback: str) -> str:
+    """Load a prompt from ai/prompts with fallback to in-code default."""
+    prompt_path = _PROMPTS_DIR / filename
+    try:
+        text = prompt_path.read_text(encoding="utf-8").strip()
+        if text:
+            return text + "\n"
+    except Exception as exc:
+        logger.warning("Prompt load failed for %s (%s). Using fallback.", prompt_path, exc)
+    return fallback
+
+
+_CATEGORIZE_PROMPT = _load_prompt("scoring_categorize_prompt.txt", _DEFAULT_CATEGORIZE_PROMPT)
 
 
 def _get_client(model: str) -> Groq:

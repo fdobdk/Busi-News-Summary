@@ -41,12 +41,14 @@ News_Summary/
 │                            (Google News RSS, broad RSS — no category routing)
 ├── filters.py               Finance gate (keyword relevance filter) and debug logging
 ├── dedup.py                 Fuzzy deduplication via rapidfuzz (threshold 75/100)
-├── scoring.py               AI categorisation + scoring, cross-batch dedup, summary rewriting
-│                            All Groq API calls live here (2-3 calls per run)
+├── scoring.py               AI categorisation + scoring
+├── rewrite.py               AI dedup + rewriting of selected winners
+│                            Groq calls are made from scoring.py/rewrite.py
 ├── render.py                HTML email rendering (Jinja2), terminal output, date formatting
 ├── send.py                  Loads subscribers, sends HTML email via Gmail SMTP
 │
 ├── .gitignore               Excludes config/.env, __pycache__, generated files
+├── .cursorrules             Cursor project rules (reads context docs in ai/)
 │
 ├── config/
 │   ├── config.yaml          All user-facing settings: scoring, email, sources
@@ -62,6 +64,16 @@ News_Summary/
 │
 ├── docs/
 │   └── documentation.md     This file
+│
+├── ai/
+│   ├── architecture.mermaid Architecture map for AI context restores
+│   ├── workflow.md          AI collaboration conventions
+│   ├── tasks.md             Active AI-oriented task tracking
+│   ├── status.md            Project memory across long chats
+│   └── prompts/
+│       ├── scoring_categorize_prompt.txt
+│       ├── dedup_prompt.txt
+│       └── rewrite_prompt.txt
 │
 └── preview/
     └── email_preview.html   Generated HTML preview from --dry-run (git-ignored)
@@ -369,16 +381,16 @@ Your rate limit has been hit. The script retries up to 3 times with increasing b
 Nothing on default settings. Groq is free tier and Gmail SMTP has no per-email cost.
 
 **Can I add a new category?**
-Yes. Add a new category block in `config/config.yaml` with `google_news_queries` and optional `rss_sources`. The AI prompt in `scoring.py` also needs the new category added to `_CATEGORIZE_PROMPT` and `_CATEGORY_MAP`. Then add the section to the colour map in `config/email_template.html` if needed.
+Yes. Add a new category block in `config/config.yaml` with `google_news_queries` and optional `rss_sources`. Then update category definitions in `ai/prompts/scoring_categorize_prompt.txt` and any category maps/constants in the pipeline modules.
 
 **How do I change the summary style?**
-Edit `_REWRITE_PROMPT` in `scoring.py`.
+Edit `ai/prompts/rewrite_prompt.txt`.
 
 **Can I change duplicate detection sensitivity?**
 Yes. Adjust `SIMILARITY_THRESHOLD` in `dedup.py` (0-100 scale). Higher = only near-identical articles flagged. Lower = more aggressive merging.
 
 **An article appears in the wrong category. Why?**
-The AI assigns categories based on the headline and description. If a source consistently miscategorises, check that the category definitions in `_CATEGORIZE_PROMPT` in `scoring.py` are clear enough to distinguish the edge case.
+The AI assigns categories based on the headline and description. If a source consistently miscategorises, tighten category definitions in `ai/prompts/scoring_categorize_prompt.txt`.
 
 **What if the AI categorisation call fails?**
 All articles get score 0 and the digest will be empty for that run. A warning is logged. The pipeline does not crash.

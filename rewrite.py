@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 _dedup_debug_logger = logging.getLogger("dedup_debug")
 _dedup_debug_logger.propagate = False  # don't echo to console
 
+MAX_DEDUP_PASSES = 3
+_PROMPTS_DIR = Path(__file__).parent / "ai" / "prompts"
+
+
 def _init_dedup_debug_log():
     """Set up file handler for debug_dedup.log (called once per run)."""
     if _dedup_debug_logger.handlers:
@@ -34,7 +38,7 @@ def _init_dedup_debug_log():
     _dedup_debug_logger.addHandler(handler)
     _dedup_debug_logger.setLevel(logging.DEBUG)
 
-_DEDUP_PROMPT = """\
+_DEFAULT_DEDUP_PROMPT = """\
 You are deduplicating a list of news articles for a financial digest.
 
 Two articles are DUPLICATES if they are about the same underlying NEWS EVENT, even if:
@@ -70,7 +74,7 @@ RESULT_JSON:
 Articles:
 """
 
-_REWRITE_PROMPT = """\
+_DEFAULT_REWRITE_PROMPT = """\
 You are rewriting headlines and summaries for a professional VC/PE daily digest.
 
 Write a 2–3 sentence summary for each article. Do NOT restate the headline. \
@@ -88,6 +92,22 @@ Return ONLY valid JSON. No explanation, no markdown.
 
 Articles:
 """
+
+
+def _load_prompt(filename: str, fallback: str) -> str:
+    """Load a prompt from ai/prompts with fallback to in-code default."""
+    prompt_path = _PROMPTS_DIR / filename
+    try:
+        text = prompt_path.read_text(encoding="utf-8").strip()
+        if text:
+            return text + "\n"
+    except Exception as exc:
+        logger.warning("Prompt load failed for %s (%s). Using fallback.", prompt_path, exc)
+    return fallback
+
+
+_DEDUP_PROMPT = _load_prompt("dedup_prompt.txt", _DEFAULT_DEDUP_PROMPT)
+_REWRITE_PROMPT = _load_prompt("rewrite_prompt.txt", _DEFAULT_REWRITE_PROMPT)
 
 
 def _format_articles(articles: List[dict]) -> str:
@@ -113,7 +133,7 @@ def _dedup_category(articles: List[dict], client, model: str,
     if len(articles) <= 1:
         return articles
 
-    prompt = _DEDUP_PROMPT + "\nArticles:\n" + _format_articles(articles)
+    prompt = _DEDUP_PROMPT + _format_articles(articles)
 
     # Debug: log articles being sent
     dbg.debug("=" * 70)

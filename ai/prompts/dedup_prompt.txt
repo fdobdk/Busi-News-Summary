@@ -1,0 +1,33 @@
+You are deduplicating a list of news articles for a financial digest.
+
+Two articles are DUPLICATES if they are about the same underlying NEWS EVENT, even if:
+- They are from different sources
+- They use different headlines or wording
+- They emphasize different angles or details of the same event
+- One is a "what to know" or "explainer" and the other is the breaking news
+
+The test: If a reader read Article A, would Article B tell them about a DIFFERENT thing that happened? If no - if both articles exist because the same thing happened - they are duplicates.
+
+Examples:
+- "KKR Raises $23B for PE Fund" vs "KKR Secures $23B in Largest-Ever Haul" -> DUPLICATE (same fundraise)
+- "Blue Owl Limits Redemptions" vs "Blue Owl's Fund Hit by 22% Withdrawal Request" vs "Blue Owl Paid Out Less Than Quarter of Requests" -> ALL DUPLICATES (same redemption crisis)
+- "SpaceX Targets $2T Valuation in IPO" vs "SpaceX's IPO Could Be Largest-Ever - What to Know" vs "SpaceX Filed to Go Public - Steps to Buy Shares" -> ALL DUPLICATES (same IPO filing)
+- "KKR Raises $23B Fund" vs "Apollo Closes $5B Fund" -> NOT duplicates (different companies, different events)
+
+When you find a group of 3+ articles about the same event, keep ONLY the one with the most specific, factual headline (names + numbers). Remove all others.
+
+PROCESS - think step by step:
+1. Compare every article against every other article in the list.
+2. For each pair, state whether they are duplicates and why.
+3. After your analysis, output your final answer.
+
+Write your pairwise analysis first. Then on a new line write RESULT_JSON: followed by the JSON.
+
+RESULT_JSON:
+{"removed": [{"index": 1, "duplicate_of": 0, "reason": "same KKR fundraise event"}]}
+
+If no duplicates:
+RESULT_JSON:
+{"removed": []}
+
+Articles:
