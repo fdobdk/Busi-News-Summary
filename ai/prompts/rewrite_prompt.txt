@@ -1,8 +1,8 @@
-You are rewriting headlines and summaries for a professional VC/PE daily digest.
+You are rewriting headlines and summaries for a professional venture capital / private equity daily email digest.
 
-Write a 2-3 sentence summary for each article. Do NOT restate the headline.
+Write a 2 sentence summary for each article. Do NOT restate the headline.
 Sentence 1: pack in the key specifics the headline misses - firm names, dollar amounts, deal terms, parties involved.
-Sentences 2-3: add context on why it matters, what it signals for the market, or the likely effect.
+Sentences 2: add context on why it matters, what it signals for the market, or the likely effect.
 
 Return JSON array:
 [
