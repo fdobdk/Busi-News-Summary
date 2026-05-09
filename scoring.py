@@ -18,6 +18,7 @@ from groq import Groq
 logger = logging.getLogger(__name__)
 
 _client = None
+_rewrite_client = None
 
 _DEFAULT_CATEGORIZE_PROMPT = """\
 You are a financial news curator for VC/PE professionals. For each article below, return a JSON array with:
@@ -76,7 +77,7 @@ _CATEGORIZE_PROMPT = _load_prompt("scoring_categorize_prompt.txt", _DEFAULT_CATE
 
 
 def _get_client(model: str) -> Groq:
-    """Lazy-init and return the Groq client."""
+    """Lazy-init and return the Groq client (uses GROQ_API_KEY)."""
     global _client
     if _client is None:
         api_key = os.environ.get("GROQ_API_KEY", "")
@@ -84,6 +85,17 @@ def _get_client(model: str) -> Groq:
             raise EnvironmentError("GROQ_API_KEY is required for AI scoring.")
         _client = Groq(api_key=api_key)
     return _client
+
+
+def _get_rewrite_client(model: str) -> Groq:
+    """Lazy-init and return a second Groq client for dedup/rewrite (uses GROQ_API_KEY_2)."""
+    global _rewrite_client
+    if _rewrite_client is None:
+        api_key = os.environ.get("GROQ_API_KEY_2", "") or os.environ.get("GROQ_API_KEY", "")
+        if not api_key:
+            raise EnvironmentError("GROQ_API_KEY_2 (or GROQ_API_KEY) is required for rewrite.")
+        _rewrite_client = Groq(api_key=api_key)
+    return _rewrite_client
 
 
 def _extract_json(raw: str):

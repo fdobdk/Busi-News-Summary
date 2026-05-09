@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Dict, List
 
-from scoring import _call, _extract_json, _get_client
+from scoring import _call, _extract_json, _get_rewrite_client
 
 logger = logging.getLogger(__name__)
 
@@ -260,8 +260,8 @@ def rewrite_all_categories(
     """
     dedup_model = config.get("scoring", {}).get("dedup_model", "llama-3.3-70b-versatile")
     rewrite_model = config.get("scoring", {}).get("rewrite_model", "llama-3.1-8b-instant")
-    dedup_client = _get_client(dedup_model)
-    rewrite_client = _get_client(rewrite_model)
+    dedup_client = _get_rewrite_client(dedup_model)
+    rewrite_client = _get_rewrite_client(rewrite_model)
 
     # Initialize debug log file only when --verbose
     if verbose:
