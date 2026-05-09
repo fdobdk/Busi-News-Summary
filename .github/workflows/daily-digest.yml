@@ -2,9 +2,9 @@ name: Daily News Digest
 
 on:
   # Remember to change if statements below if updating time (or else GitHub won't run it)
-  schedule:
-    - cron: '24 13 * * 0-4' #~8AM HKT
-    - cron: '13 11 * * *' #~8AM EST
+  # schedule:
+  #   - cron: '24 13 * * 0-4' #~8AM HKT
+  #   - cron: '13 11 * * *' #~8AM EST
   workflow_dispatch:
     inputs:
       audience:
@@ -24,8 +24,7 @@ jobs:
   digest-hk:
     runs-on: ubuntu-latest
     if: >-
-      github.event_name == 'workflow_dispatch' && (github.event.inputs.audience == 'hk' || github.event.inputs.audience == 'both')
-      || github.event_name == 'schedule' && github.event.schedule == '24 13 * * 0-4'
+      github.event.inputs.audience == 'hk' || github.event.inputs.audience == 'both'
 
     steps:
       - uses: actions/checkout@v4
@@ -49,8 +48,7 @@ jobs:
   digest-est:
     runs-on: ubuntu-latest
     if: >-
-      github.event_name == 'workflow_dispatch' && (github.event.inputs.audience == 'est' || github.event.inputs.audience == 'both')
-      || github.event_name == 'schedule' && github.event.schedule == '13 11 * * *'
+      github.event.inputs.audience == 'est' || github.event.inputs.audience == 'both'
 
     steps:
       - uses: actions/checkout@v4
