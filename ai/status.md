@@ -13,7 +13,15 @@
   - `ai/prompts/rewrite_prompt.txt`
 
 ## In Progress
-- None
+- Added PitchBook newsletter ingestion via IMAP email parsing:
+  - New module: `email_sources.py`
+  - Integrated into source aggregation in `sources.py`
+  - Added `settings.pitchbook_email` config block in `config/config.yaml`
+  - Added `beautifulsoup4` dependency
+- Added hybrid summary rewrite strategy:
+  - Keep high-quality source descriptions directly
+  - Rewrite only low-quality/missing summaries with AI
+  - Added thresholds in `scoring.rewrite_strategy`
 
 ## Next
 - If category taxonomy changes, update:

@@ -129,7 +129,7 @@ def print_terminal_digest(digest_sections: dict, date_str: str, preview_path: st
 
     print()
     print("=" * width)
-    print(f"  HTML preview saved → {preview_path}")
+    print(f"  HTML preview saved -> {preview_path}")
     print("=" * width)
     print()
 

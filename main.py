@@ -23,6 +23,7 @@ import yaml
 from dotenv import load_dotenv
 
 from dedup import deduplicate
+from email_sources import fetch_pitchbook_articles
 from filter import finance_gate
 from render import CATEGORY_KEY_MAP, get_display_name, print_source_summary, print_terminal_digest, render_html
 from rewrite import rewrite_all_categories
@@ -192,6 +193,23 @@ def main() -> None:
         metavar="FILE",
         help="Override the subscribers file from config.",
     )
+    parser.add_argument(
+        "--test-pitchbook",
+        action="store_true",
+        help="Test only PitchBook email ingestion and print extracted articles.",
+    )
+    parser.add_argument(
+        "--pitchbook-cutoff-hours",
+        type=int,
+        default=24,
+        metavar="HOURS",
+        help="Hours lookback for --test-pitchbook mode (default: 24).",
+    )
+    parser.add_argument(
+        "--pitchbook-debug",
+        action="store_true",
+        help="Print detailed IMAP/sender/subject diagnostics in --test-pitchbook mode.",
+    )
     args = parser.parse_args()
 
     load_dotenv(Path(__file__).parent / "config" / ".env")
@@ -206,6 +224,41 @@ def main() -> None:
     config = load_config(args.config)
     if args.subscribers:
         config["email"]["subscribers_file"] = args.subscribers
+
+    if args.test_pitchbook:
+        logger.info("Running PitchBook-only test mode (cutoff=%dh).", args.pitchbook_cutoff_hours)
+        articles, status = fetch_pitchbook_articles(
+            config,
+            cutoff_hours=args.pitchbook_cutoff_hours,
+            debug=args.pitchbook_debug,
+        )
+        logger.info("PitchBook fetch status: %s", status)
+        logger.info("PitchBook extracted articles: %d", len(articles))
+        if not articles:
+            logger.info(
+                "No PitchBook articles found. Check sender list, subject keywords, IMAP inbox, and cutoff hours."
+            )
+            return
+
+        print()
+        print("=" * 70)
+        print(f"  PITCHBOOK TEST RESULTS ({len(articles)} article(s))")
+        print("=" * 70)
+        for i, article in enumerate(articles, start=1):
+            title = article.get("title", "")
+            source = article.get("source_name", "")
+            pub = article.get("published_date") or "n/a"
+            url = article.get("url", "")
+            summary = (article.get("description") or "").strip()
+            print(f"\n  {i}. {title}")
+            print(f"     Source: {source} | Published: {pub}")
+            if summary:
+                print(f"     Summary: {summary[:220]}")
+            if url:
+                print(f"     URL: {url}")
+        print()
+        return
+
     date_str = datetime.now().strftime("%B %d, %Y")
 
     try:

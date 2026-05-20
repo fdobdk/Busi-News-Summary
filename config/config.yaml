@@ -4,6 +4,9 @@ scoring:
   scoring_model: "llama-3.3-70b-versatile"   # Groq model for categorize + score (needs strong reasoning)
   dedup_model: "llama-3.3-70b-versatile"     # Groq model for AI dedup (needs strong reasoning)
   rewrite_model: "llama-3.3-70b-versatile"      # Groq model for headline/summary rewrite (fast, high rate limit)
+  rewrite_strategy:
+    direct_summary_min_chars: 80             # keep source summary directly if >= this length
+    direct_summary_min_words: 12             # and has at least this many words
   min_score: 3                               # only include articles scoring >= this
   batch_size: 40                             # articles per AI scoring batch
 
@@ -13,6 +16,22 @@ email:
 
 settings:
   final_articles_per_category: 5     # articles shown per section
+  pitchbook_email:
+    enabled: true
+    source_name: "PitchBook Newsletter"
+    imap_host: "imap.gmail.com"   # use outlook.office365.com for Outlook
+    include_external_sections: false # set true to include Catch Up Quick / Side Letters links as external
+    allow_generic_html_fallback: false # set true only if section-aware extraction fails and you want broad fallback
+    main_story_limit: 2            # number of main PitchBook-authored stories to include per email
+    debug_samples_per_sender: 5   # how many matched subjects to print in --pitchbook-debug mode
+    senders:
+      - "news@pitchbook.com"
+      - "newsletters@pitchbook.com"
+      - "news-noreply@news.pitchbook.com"
+    # subject_keywords:
+    #   - "pitchbook"
+    #   - "briefing"
+    #   - "The Daily Pitch"
 
   # Source reputation tiers (used by dedup to pick the better source)
   source_reputation:
@@ -23,6 +42,7 @@ settings:
       - reuters.com
       - cnbc.com
       - barrons.com
+      - pitchbook.com
     tier_2:
       - techcrunch.com
       - privateequitywire.co.uk

@@ -16,6 +16,8 @@ from urllib.parse import urlparse
 import feedparser
 import requests
 
+from email_sources import fetch_pitchbook_articles
+
 logger = logging.getLogger(__name__)
 
 USER_AGENT = (
@@ -249,6 +251,21 @@ def fetch_all_articles(config: dict, cutoff_hours: int = 24) -> Tuple[List[dict]
                 all_articles.append(a)
                 added += 1
         return added
+
+    # ── 0. PitchBook newsletter emails ──
+    pitchbook_cfg = settings.get("pitchbook_email", {})
+    if pitchbook_cfg.get("enabled", False):
+        fetched, status = fetch_pitchbook_articles(config, cutoff_hours=cutoff_hours)
+        added = _add(fetched)
+        source_log.append(
+            {
+                "source": pitchbook_cfg.get("source_name", "PitchBook Newsletter"),
+                "section": "Broad",
+                "count": added,
+                "status": status,
+            }
+        )
+        logger.info("PitchBook email [%s] → %d articles", status, added)
 
     # ── 1. Broad RSS sources (Bloomberg fetched ONCE here) ──
     for bsource in settings.get("broad_rss_sources", []):

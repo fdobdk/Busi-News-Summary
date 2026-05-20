@@ -10,6 +10,7 @@ One Groq call per dedup pass + one rewrite call per category.
 """
 
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Dict, List
@@ -110,6 +111,31 @@ _DEDUP_PROMPT = _load_prompt("dedup_prompt.txt", _DEFAULT_DEDUP_PROMPT)
 _REWRITE_PROMPT = _load_prompt("rewrite_prompt.txt", _DEFAULT_REWRITE_PROMPT)
 
 
+def _is_high_quality_source_summary(summary: str, min_chars: int, min_words: int) -> bool:
+    """Heuristic check for whether source summary is already digest-ready."""
+    text = (summary or "").strip()
+    if not text:
+        return False
+
+    lowered = text.lower()
+    boilerplate_markers = (
+        "read more",
+        "click here",
+        "subscribe",
+        "sign up",
+        "view in browser",
+        "watch now",
+    )
+    if any(marker in lowered for marker in boilerplate_markers):
+        return False
+
+    if len(text) < min_chars:
+        return False
+
+    word_count = len(re.findall(r"\b\w+\b", text))
+    return word_count >= min_words
+
+
 def _format_articles(articles: List[dict]) -> str:
     """Format articles as numbered lines for prompts."""
     lines = []
@@ -206,12 +232,44 @@ def _dedup_category(articles: List[dict], client, model: str,
         return articles
 
 
-def _rewrite_category(articles: List[dict], client, model: str) -> List[dict]:
-    """Rewrite headlines/summaries for one category's articles."""
+def _rewrite_category(
+    articles: List[dict],
+    client,
+    model: str,
+    rewrite_cfg: dict | None = None,
+) -> List[dict]:
+    """Rewrite only low-quality summaries and keep high-quality source summaries."""
     if not articles:
         return []
 
-    prompt = _REWRITE_PROMPT + _format_articles(articles)
+    rewrite_cfg = rewrite_cfg or {}
+
+    min_chars = int(rewrite_cfg.get("direct_summary_min_chars", 80))
+    min_words = int(rewrite_cfg.get("direct_summary_min_words", 12))
+
+    to_rewrite = []
+    to_rewrite_index_map = []
+
+    for i, article in enumerate(articles):
+        source_summary = (article.get("description") or "").strip()
+        if _is_high_quality_source_summary(source_summary, min_chars=min_chars, min_words=min_words):
+            article["rewritten_headline"] = article["title"]
+            article["rewritten_summary"] = source_summary
+        else:
+            to_rewrite.append(article)
+            to_rewrite_index_map.append(i)
+
+    if not to_rewrite:
+        return articles
+
+    logger.info(
+        "Using source summaries for %d/%d; AI rewriting %d article(s).",
+        len(articles) - len(to_rewrite),
+        len(articles),
+        len(to_rewrite),
+    )
+
+    prompt = _REWRITE_PROMPT + _format_articles(to_rewrite)
 
     try:
         raw = _call(client, model, prompt, max_tokens=8192)
@@ -225,20 +283,21 @@ def _rewrite_category(articles: List[dict], client, model: str) -> List[dict]:
             if isinstance(a, dict) and "index" in a:
                 rewritten_map[a["index"]] = a
 
-        for i, article in enumerate(articles):
-            if i in rewritten_map:
-                r = rewritten_map[i]
-                article["rewritten_headline"] = r.get("headline", article["title"])
-                article["rewritten_summary"] = r.get("summary", article.get("description", ""))
+        for local_idx, article in enumerate(to_rewrite):
+            original_idx = to_rewrite_index_map[local_idx]
+            if local_idx in rewritten_map:
+                r = rewritten_map[local_idx]
+                articles[original_idx]["rewritten_headline"] = r.get("headline", article["title"])
+                articles[original_idx]["rewritten_summary"] = r.get("summary", article.get("description", ""))
             else:
-                article["rewritten_headline"] = article["title"]
-                article["rewritten_summary"] = article.get("description", "")
+                articles[original_idx]["rewritten_headline"] = article["title"]
+                articles[original_idx]["rewritten_summary"] = article.get("description", "")
 
         return articles
 
     except Exception as exc:
         logger.error("Rewrite failed for category: %s", exc)
-        for article in articles:
+        for article in to_rewrite:
             article["rewritten_headline"] = article["title"]
             article["rewritten_summary"] = article.get("description", "")
         return articles
@@ -260,6 +319,7 @@ def rewrite_all_categories(
     """
     dedup_model = config.get("scoring", {}).get("dedup_model", "llama-3.3-70b-versatile")
     rewrite_model = config.get("scoring", {}).get("rewrite_model", "llama-3.1-8b-instant")
+    rewrite_cfg = config.get("scoring", {}).get("rewrite_strategy", {})
     dedup_client = _get_rewrite_client(dedup_model)
     rewrite_client = _get_rewrite_client(rewrite_model)
 
@@ -287,7 +347,12 @@ def rewrite_all_categories(
 
         # ── Rewrite ──
         logger.info("Rewriting %s (%d articles)", category, len(articles))
-        results[category] = _rewrite_category(articles, rewrite_client, rewrite_model)
+        results[category] = _rewrite_category(
+            articles,
+            rewrite_client,
+            rewrite_model,
+            rewrite_cfg if isinstance(rewrite_cfg, dict) else {},
+        )
 
         # Rate-limit buffer between categories
         if cat_idx < len(categories) - 1:
