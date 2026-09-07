@@ -2,6 +2,7 @@
 
 ## Completed
 - Added centralized AI asset folder: `ai/`
+- Migrated scoring, AI dedup, and rewriting from `llama-3.3-70b-versatile` to Groq-hosted `openai/gpt-oss-120b`
 - Added context docs:
   - `ai/architecture.mermaid`
   - `ai/workflow.md`

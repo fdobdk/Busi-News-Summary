@@ -1,9 +1,9 @@
 # VC/PE Daily Digest — pipeline configuration
 
 scoring:
-  scoring_model: "llama-3.3-70b-versatile"   # Groq model for categorize + score (needs strong reasoning)
-  dedup_model: "llama-3.3-70b-versatile"     # Groq model for AI dedup (needs strong reasoning)
-  rewrite_model: "llama-3.3-70b-versatile"      # Groq model for headline/summary rewrite (fast, high rate limit)
+  scoring_model: "openai/gpt-oss-120b"       # Groq model for categorize + score (needs strong reasoning)
+  dedup_model: "openai/gpt-oss-120b"         # Groq model for AI dedup (needs strong reasoning)
+  rewrite_model: "openai/gpt-oss-120b"       # Groq model for headline/summary rewrite
   rewrite_strategy:
     direct_summary_min_chars: 80             # keep source summary directly if >= this length
     direct_summary_min_words: 12             # and has at least this many words

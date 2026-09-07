@@ -166,7 +166,7 @@ def batch_categorize_and_score(articles: List[dict], config: dict) -> List[dict]
     'score' (1-5) fields. Articles scored NONE are filtered out.
     Returns only articles with a valid category.
     """
-    model = config.get("scoring", {}).get("scoring_model", "llama-3.3-70b-versatile")
+    model = config.get("scoring", {}).get("scoring_model", "openai/gpt-oss-120b")
     batch_size = config.get("scoring", {}).get("batch_size", 40)
     client = _get_client(model)
 

@@ -317,8 +317,8 @@ def rewrite_all_categories(
         config: pipeline config dict
         verbose: if True, write debug_dedup.log to preview/
     """
-    dedup_model = config.get("scoring", {}).get("dedup_model", "llama-3.3-70b-versatile")
-    rewrite_model = config.get("scoring", {}).get("rewrite_model", "llama-3.1-8b-instant")
+    dedup_model = config.get("scoring", {}).get("dedup_model", "openai/gpt-oss-120b")
+    rewrite_model = config.get("scoring", {}).get("rewrite_model", "openai/gpt-oss-120b")
     rewrite_cfg = config.get("scoring", {}).get("rewrite_strategy", {})
     dedup_client = _get_rewrite_client(dedup_model)
     rewrite_client = _get_rewrite_client(rewrite_model)
