@@ -1,9 +1,8 @@
 # Environment & secrets
 config/.env
 
-# Confidential subscriber lists (real emails) — keep local only
-subscribers/*.json
-!subscribers/subscribers.example.json
+# Confidential subscriber lists (real emails) — created at runtime from secrets, never committed
+subscribers/
 
 # Python
 __pycache__/
