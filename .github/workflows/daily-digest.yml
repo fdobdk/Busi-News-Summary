@@ -37,6 +37,13 @@ jobs:
       - name: Install dependencies
         run: pip install -r config/requirements.txt
 
+      - name: Write subscriber list (HK)
+        env:
+          SUBSCRIBERS_HKT: ${{ secrets.SUBSCRIBERS_HKT }}
+        run: |
+          mkdir -p subscribers
+          printf '%s' "$SUBSCRIBERS_HKT" > subscribers/hkt.json
+
       - name: Run daily digest (HK)
         env:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
@@ -61,6 +68,13 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r config/requirements.txt
+
+      - name: Write subscriber list (EST)
+        env:
+          SUBSCRIBERS_EST: ${{ secrets.SUBSCRIBERS_EST }}
+        run: |
+          mkdir -p subscribers
+          printf '%s' "$SUBSCRIBERS_EST" > subscribers/est.json
 
       - name: Run daily digest (EST)
         env:
