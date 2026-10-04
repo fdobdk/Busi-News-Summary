@@ -1,6 +1,10 @@
 # Environment & secrets
 config/.env
 
+# Confidential subscriber lists (real emails) — keep local only
+subscribers/*.json
+!subscribers/subscribers.example.json
+
 # Python
 __pycache__/
 *.pyc
